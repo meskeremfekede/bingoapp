@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "1087473816518",
+    "firebase_url": "https://mybingoapp-c925a-default-rtdb.europe-west1.firebasedatabase.app",
+    "project_id": "mybingoapp-c925a",
+    "storage_bucket": "mybingoapp-c925a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1087473816518:android:fb1c75640ca1d1bd7018c7",
+        "android_client_info": {
+          "package_name": "com.example.mygame"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAmSIx9Q5IV3sc3vF-e1PVm2RjT9gjfihY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
