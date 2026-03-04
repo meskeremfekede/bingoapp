@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:mygame/services/firebase_service.dart';
-import 'package:mygame/screens/player/player_game_lobby_screen.dart';
+import 'package:mygame/screens/player/player_card_selection_screen.dart';
 
 class JoinGameScreen extends StatefulWidget {
   const JoinGameScreen({super.key});
@@ -39,22 +39,22 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
         final gameQuery = await FirebaseFirestore.instance
             .collection('games')
             .where('gameCode', isEqualTo: _gameCodeController.text)
-            .where('status', isEqualTo: 'pending')
             .limit(1)
             .get();
 
         if (gameQuery.docs.isEmpty) {
-          throw Exception('No pending game found with that code. Please check the code and try again.');
+          throw Exception('No game found with that code. Please check the code and try again.');
         }
 
         final gameId = gameQuery.docs.first.id;
+        final gameData = gameQuery.docs.first.data();
+        final gameStatus = gameData['status'] as String? ?? 'pending';
 
-        await _firebaseService.joinGameLobby(gameId: gameId, playerId: user.uid);
-
+        // Allow joining even if game started, but go to card selection
         if (mounted) {
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (context) => PlayerGameLobbyScreen(gameId: gameId)),
+            MaterialPageRoute(builder: (context) => CardSelectionScreen(gameId: gameId)),
           );
         }
       } catch (e) {

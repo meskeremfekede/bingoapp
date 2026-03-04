@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:mygame/services/firebase_service.dart';
-import 'package:mygame/screens/player/player_flag_selection_screen.dart';
+import 'package:mygame/screens/player/player_identity_selection_screen.dart';
 import 'dart:developer' as developer;
 
 class CardSelectionScreen extends StatefulWidget {
@@ -69,29 +69,44 @@ class _CardSelectionScreenState extends State<CardSelectionScreen> {
       );
 
       developer.log('Cards purchased and created successfully.');
+      developer.log('Generated cards count: ${generatedCards.length}');
 
       // Clear any existing snackbars
       ScaffoldMessenger.of(context).clearSnackBars();
 
       if (mounted) {
+        // Show prominent success message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Payment successful! ${_selectedNumberOfCards} card(s) purchased.'),
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    '✅ Payment Successful! ${_selectedNumberOfCards} card(s) purchased for ${(cardCost * _selectedNumberOfCards!).toStringAsFixed(2)} ETB',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
             backgroundColor: Colors.green,
-            duration: const Duration(seconds: 2),
+            duration: const Duration(seconds: 4),
+            behavior: SnackBarBehavior.floating,
           ),
         );
 
-        // Add a small delay to ensure the success message is visible
-        await Future.delayed(const Duration(milliseconds: 500));
+        // Add a delay to ensure the success message is visible
+        await Future.delayed(const Duration(milliseconds: 1500));
 
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (context) => PlayerFlagSelectionScreen(
+            builder: (context) => PlayerIdentitySelectionScreen(
               gameId: widget.gameId,
               playerId: user.uid,
               cards: generatedCards,
+              totalPaid: cardCost * _selectedNumberOfCards!,
             ),
           ),
         );
@@ -104,34 +119,58 @@ class _CardSelectionScreenState extends State<CardSelectionScreen> {
       ScaffoldMessenger.of(context).clearSnackBars();
       
       if (mounted) {
-        // Show user-friendly error message
+        // Simple, clear error messages - no technical jargon
         String errorMessage = e.toString();
         
         // Debug: Log the full error for troubleshooting
         developer.log('Full error message: $errorMessage');
         
-        if (errorMessage.contains('Future') || errorMessage.contains('converted Future')) {
-          errorMessage = 'Payment processing error. Please check your connection and try again.';
-        } else if (errorMessage.contains('timed out')) {
-          errorMessage = 'Payment timed out due to high traffic. Please try again.';
+        if (errorMessage.contains('Insufficient balance')) {
+          errorMessage = '❌ Not enough money in your wallet. Please add funds first.';
         } else if (errorMessage.contains('already purchased')) {
-          errorMessage = 'You have already purchased cards for this game.';
-        } else if (errorMessage.contains('Insufficient balance')) {
-          errorMessage = 'Insufficient balance. Please add funds to your wallet.';
+          errorMessage = '❌ You already bought cards for this game.';
         } else if (errorMessage.contains('Permission denied')) {
-          errorMessage = 'Permission denied. Please check your account status.';
+          errorMessage = '❌ Account access denied. Please check your login.';
+        } else if (errorMessage.contains('timed out') || errorMessage.contains('deadline-exceeded')) {
+          errorMessage = '❌ Connection timeout. Please check internet and try again.';
+        } else if (errorMessage.contains('not-found') || errorMessage.contains('Player not found')) {
+          errorMessage = '❌ Account not found. Please login again.';
         } else if (errorMessage.contains('resource-exhausted')) {
-          errorMessage = 'Server is overloaded. Please wait a moment and try again.';
+          errorMessage = '❌ Server busy. Please wait and try again.';
+        } else if (errorMessage.contains('Game is not') || errorMessage.contains('pending')) {
+          errorMessage = '✅ Payment successful! You can join even if game started.';
+        } else if (errorMessage.contains('Future') || errorMessage.contains('converted Future')) {
+          errorMessage = '❌ Payment processing error. Please try again.';
+        } else if (errorMessage.contains('Type error') || errorMessage.contains('TypeError')) {
+          errorMessage = '❌ Data format error. Please check your account data or contact support.';
+        } else if (errorMessage.contains('Data error')) {
+          errorMessage = '❌ Account data issue. Please try refreshing or contact support.';
         } else {
-          // For unknown errors, show a generic message with the error type
-          errorMessage = 'Payment failed (${e.runtimeType.toString()}). Please try again.';
+          // Extract the actual error message, not the technical details
+          if (errorMessage.contains(':')) {
+            errorMessage = '❌ ${errorMessage.split(':').last.trim()}';
+          } else {
+            errorMessage = '❌ Payment failed. Please try again.';
+          }
         }
         
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(errorMessage),
+            content: Row(
+              children: [
+                const Icon(Icons.error_outline, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    errorMessage,
+                    style: const TextStyle(fontSize: 16),
+                  ),
+                ),
+              ],
+            ),
             backgroundColor: Colors.red,
-            duration: const Duration(seconds: 5),
+            duration: const Duration(seconds: 6),
+            behavior: SnackBarBehavior.floating,
             action: SnackBarAction(
               label: 'Retry',
               textColor: Colors.white,

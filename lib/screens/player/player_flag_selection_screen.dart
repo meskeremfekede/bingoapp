@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:mygame/services/firebase_service.dart';
+import 'package:mygame/screens/player/player_waiting_screen.dart';
 import 'package:mygame/screens/player/player_game_board_screen.dart';
 import 'dart:developer' as developer;
 
@@ -80,11 +82,27 @@ class _PlayerFlagSelectionScreenState extends State<PlayerFlagSelectionScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Flags confirmed! Waiting for other players...'),
+            content: Text('✅ Flags confirmed! Waiting for admin to start game...'),
             backgroundColor: Colors.green,
             duration: Duration(seconds: 3),
           ),
         );
+
+        // Navigate to waiting screen after a short delay
+        await Future.delayed(const Duration(milliseconds: 2000));
+        
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => PlayerWaitingScreen(
+                gameId: widget.gameId,
+                playerId: widget.playerId,
+                identityNumbers: _selectedFlags.toList(),
+              ),
+            ),
+          );
+        }
       }
     } catch (e, s) {
       debugPrint('Error confirming flags: ${e.toString()}');

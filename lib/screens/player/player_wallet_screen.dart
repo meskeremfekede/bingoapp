@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:mygame/simple_payment_fix.dart';
+import 'package:mygame/firebase_rules_check.dart';
+import 'package:mygame/game_status_checker.dart';
+import 'package:mygame/data_type_debugger_fixed.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart'; // Import the intl package
-import 'package:mygame/comprehensive_payment_test.dart'; // Import payment test
-import 'package:mygame/existing_game_payment_test.dart'; // Import existing game test
-import 'package:mygame/deep_payment_debug.dart'; // Import deep debug
+// Payment debug/test widgets removed to avoid missing-import build errors
 
 enum TransactionFilter { ALL, WINNINGS, FEES }
 
@@ -54,6 +56,95 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
     return query.snapshots();
   }
 
+  Future<void> _fixAccountData() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please login first'), backgroundColor: Colors.red),
+        );
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Fixing account data...'), backgroundColor: Colors.orange),
+      );
+
+      // Get current player data
+      final playerDoc = await FirebaseFirestore.instance
+          .collection('players')
+          .doc(user.uid)
+          .get();
+
+      if (!playerDoc.exists) {
+        // Create new player document
+        await FirebaseFirestore.instance
+            .collection('players')
+            .doc(user.uid)
+            .set({
+              'name': user.displayName ?? 'Player',
+              'email': user.email ?? '',
+              'phoneNumber': '',
+              'balance': 500.0, // Default balance
+              'joinDate': FieldValue.serverTimestamp(),
+            });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('✅ Account created with 500 ETB balance'), backgroundColor: Colors.green),
+        );
+      } else {
+        // Fix existing data
+        final data = playerDoc.data()!;
+        Map<String, dynamic> updates = {};
+        
+        // Fix balance if missing or invalid
+        if (!data.containsKey('balance') || data['balance'] == null) {
+          updates['balance'] = 500.0;
+        }
+        
+        // Fix name if missing
+        if (!data.containsKey('name') || data['name'] == null) {
+          updates['name'] = user.displayName ?? 'Player';
+        }
+        
+        // Fix email if missing
+        if (!data.containsKey('email') || data['email'] == null) {
+          updates['email'] = user.email ?? '';
+        }
+        
+        // Fix joinDate if missing or wrong type
+        if (!data.containsKey('joinDate') || data['joinDate'] == null) {
+          updates['joinDate'] = FieldValue.serverTimestamp();
+        } else if (data['joinDate'] is String) {
+          // Convert string date to timestamp
+          updates['joinDate'] = FieldValue.serverTimestamp();
+        }
+        
+        if (updates.isNotEmpty) {
+          await FirebaseFirestore.instance
+              .collection('players')
+              .doc(user.uid)
+              .update(updates);
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('✅ Fixed ${updates.length} account issues'), backgroundColor: Colors.green),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('✅ Account data looks good'), backgroundColor: Colors.green),
+          );
+        }
+      }
+      
+      setState(() {}); // Refresh UI
+      
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('❌ Error fixing account: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -65,19 +156,19 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
             child: _buildBalanceCard(),
           ),
           _buildFilterChips(),
-          const SizedBox(height: 16),
-          // Add payment test button
+          const SizedBox(height: 8),
+          // Data Type Debugger Button
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
             child: ElevatedButton.icon(
               onPressed: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const ComprehensivePaymentTest()),
+                  MaterialPageRoute(builder: (context) => const DataTypeDebugger()),
                 );
               },
               icon: const Icon(Icons.bug_report),
-              label: const Text('Debug Payment Issue'),
+              label: const Text('Debug Data Types'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.orange,
                 foregroundColor: Colors.white,
@@ -86,17 +177,18 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
             ),
           ),
           const SizedBox(height: 8),
+          // Game Status Checker Button
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
             child: ElevatedButton.icon(
               onPressed: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const ExistingGamePaymentTest()),
+                  MaterialPageRoute(builder: (context) => const GameStatusChecker()),
                 );
               },
-              icon: const Icon(Icons.gamepad),
-              label: const Text('Test with Existing Game'),
+              icon: const Icon(Icons.search),
+              label: const Text('Check Game Status'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.purple,
                 foregroundColor: Colors.white,
@@ -105,24 +197,7 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
             ),
           ),
           const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: ElevatedButton.icon(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const DeepPaymentDebug()),
-                );
-              },
-              icon: const Icon(Icons.search),
-              label: const Text('Deep Payment Debug'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-            ),
-          ),
+          // Payment debug buttons removed
           const SizedBox(height: 16),
           const Text('Transaction History', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
@@ -200,6 +275,22 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
                     label: const Text('Refresh Balance'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blue,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () async {
+                      // Fix account data
+                      await _fixAccountData();
+                    },
+                    icon: const Icon(Icons.healing, color: Colors.white),
+                    label: const Text('Fix Account Data'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
                       foregroundColor: Colors.white,
                     ),
                   ),

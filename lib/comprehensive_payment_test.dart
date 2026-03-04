@@ -97,10 +97,13 @@ class _ComprehensivePaymentTestState extends State<ComprehensivePaymentTest> {
       bool canPay = true;
       String validationError = '';
 
+      // REMOVED: Game status check - players can pay even if game started
       if (gameStatus != 'pending') {
-        canPay = false;
-        validationError = 'Game is not pending (status: $gameStatus)';
-      } else if (playerBalance < entryFee) {
+        // Allow payment even if game started
+        developer.log('✅ Allowing payment even though game status is: $gameStatus');
+      }
+      
+      if (playerBalance < entryFee) {
         canPay = false;
         validationError = 'Insufficient balance (have: $playerBalance, need: $entryFee)';
       }

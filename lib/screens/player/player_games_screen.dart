@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:mygame/services/firebase_service.dart';
-import 'package:mygame/screens/player/player_game_lobby_screen.dart';
+import 'package:mygame/screens/player/player_card_selection_screen.dart';
 import 'package:mygame/screens/player/player_game_board_screen.dart';
 import 'package:mygame/screens/player/player_flag_selection_screen.dart';
 
@@ -92,10 +92,10 @@ class _PlayerGamesScreenState extends State<PlayerGamesScreen> {
     if (user == null) return;
 
     try {
-      await _firebaseService.joinGameLobby(gameId: game.id, playerId: user.uid);
+      // Go directly to card selection instead of lobby
       Navigator.push(
         context,
-        MaterialPageRoute(builder: (context) => PlayerGameLobbyScreen(gameId: game.id)),
+        MaterialPageRoute(builder: (context) => CardSelectionScreen(gameId: game.id)),
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -108,56 +108,15 @@ class _PlayerGamesScreenState extends State<PlayerGamesScreen> {
     final user = _auth.currentUser;
     if (user == null) return;
     
-    // Check if player has selected flags
+    // Go directly to card selection for rejoining too
     try {
-      final playerDataDoc = await FirebaseFirestore.instance
-          .collection('games')
-          .doc(game.id)
-          .collection('playerData')
-          .doc(user.uid)
-          .get();
-      
-      if (!playerDataDoc.exists) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('You need to purchase cards first!'), backgroundColor: Colors.red),
-        );
-        return;
-      }
-      
-      final playerData = playerDataDoc.data() as Map<String, dynamic>? ?? {};
-      final List<dynamic> selectedFlags = playerData['selectedFlags'] as List<dynamic>? ?? [];
-      final List<dynamic> cardsData = playerData['cards'] as List<dynamic>? ?? [];
-      
-      if (selectedFlags.isEmpty) {
-        // Player hasn't selected flags, route to flag selection
-        final List<List<int>> cards = cardsData.map((card) {
-          if (card is List) {
-            return card.map((num) => (num as int? ?? 0)).toList();
-          } else {
-            return <int>[];
-          }
-        }).where((card) => card.isNotEmpty).toList();
-        
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => PlayerFlagSelectionScreen(
-              gameId: game.id,
-              playerId: user.uid,
-              cards: cards,
-            ),
-          ),
-        );
-      } else {
-        // Player has selected flags, go to game board
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (context) => PlayerGameBoardScreen(gameId: game.id, playerId: user.uid)),
-        );
-      }
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => CardSelectionScreen(gameId: game.id)),
+      );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error checking game status: ${e.toString()}'), backgroundColor: Colors.red),
+        SnackBar(content: Text("Failed to rejoin game: ${e.toString()}")),
       );
     }
   }

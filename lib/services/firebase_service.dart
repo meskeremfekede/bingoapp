@@ -7,17 +7,6 @@ import 'package:flutter/foundation.dart';
 class FirebaseService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  // Initialize with web-specific settings
-  FirebaseService() {
-    // Configure Firestore for web
-    if (kIsWeb) {
-      _firestore.settings = const Settings(
-        persistenceEnabled: true,
-        cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
-      );
-    }
-  }
-
   // --- App Configuration ---
   Stream<String> getRegistrationCodeStream() {
     return _firestore.collection('config').doc('app_settings').snapshots().map((doc) {
@@ -79,9 +68,42 @@ class FirebaseService {
 
   Future<void> joinGameLobby({required String gameId, required String playerId}) async {
     final gameRef = _firestore.collection('games').doc(gameId);
+    final playerRef = _firestore.collection('players').doc(playerId);
 
     try {
       await _firestore.runTransaction((transaction) async {
+        final playerSnap = await playerRef.get();
+        if (!playerSnap.exists) {
+          debugPrint('❌ Player document not found');
+          throw Exception('Player not found.');
+        }
+
+        final Map<String, dynamic>? playerData = playerSnap.data();
+        if (playerData == null) {
+          debugPrint('❌ Player data is null');
+          throw Exception('Player data is corrupted or missing.');
+        }
+        
+        final dynamic balanceValue = playerData['balance'];
+        debugPrint('Raw balance value: $balanceValue (type: ${balanceValue.runtimeType})');
+        
+        if (balanceValue == null) {
+          debugPrint('❌ Balance value is null');
+          throw Exception('Player balance is not set. Please contact support.');
+        }
+        
+        double currentBalance = 0.0;
+        if (balanceValue is num) {
+          currentBalance = balanceValue.toDouble();
+          debugPrint('✅ Balance parsed as number: $currentBalance');
+        } else if (balanceValue is String) {
+          currentBalance = double.tryParse(balanceValue) ?? 0.0;
+          debugPrint('✅ Balance parsed as string: $currentBalance');
+        } else {
+          debugPrint('❌ Invalid balance type: ${balanceValue.runtimeType}');
+          throw Exception('Invalid balance format in player data.');
+        }
+
         final gameSnap = await transaction.get(gameRef);
         if (!gameSnap.exists) {
           throw Exception('Game not found.');
@@ -128,25 +150,29 @@ class FirebaseService {
   }) async {
     for (int attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        debugPrint('Payment attempt ${attempt + 1}/$maxRetries for player $playerId');
-        
-        final result = await _purchaseAndSelectCardsWithQueue(
+        // 1) Validate preconditions outside the transaction to avoid Web SDK runtime errors
+        final prep = await _preparePaymentPreconditions(
           gameId: gameId,
           playerId: playerId,
           numberOfCards: numberOfCards,
           cardCost: cardCost,
         );
-        
-        debugPrint('Payment successful for player $playerId on attempt ${attempt + 1}');
+
+        final List<List<int>> generatedCards = prep['generatedCards'] as List<List<int>>;
+        final double totalCost = prep['totalCost'] as double;
+
+        // 2) Execute the minimal transaction that only performs writes
+        final result = await _applyPaymentTransaction(
+          gameId: gameId,
+          playerId: playerId,
+          numberOfCards: numberOfCards,
+          totalCost: totalCost,
+          generatedCards: generatedCards,
+        );
+
         return result;
-        
-      } catch (e, stackTrace) {
-        debugPrint('Payment attempt ${attempt + 1} failed for player $playerId: $e');
-        debugPrint('Stack trace: $stackTrace');
-        
+      } catch (e) {
         if (attempt == maxRetries - 1) {
-          // Last attempt failed, re-throw with enhanced error message
-          // Don't wrap in another Exception to avoid Future conversion issues
           String errorMessage = 'Payment failed after $maxRetries attempts. Last error: ';
           if (e is Exception) {
             errorMessage += e.toString();
@@ -155,18 +181,14 @@ class FirebaseService {
           }
           throw Exception(errorMessage);
         }
-        
-        // Exponential backoff: wait 1s, 2s, 4s...
         final waitTime = Duration(milliseconds: 1000 * (1 << attempt));
-        debugPrint('Waiting ${waitTime.inMilliseconds}ms before retry...');
         await Future.delayed(waitTime);
       }
     }
-    
     throw Exception('Payment failed after $maxRetries attempts');
   }
-
-  Future<List<List<int>>> _purchaseAndSelectCardsWithQueue({
+  
+  Future<Map<String, Object>> _preparePaymentPreconditions({
     required String gameId,
     required String playerId,
     required int numberOfCards,
@@ -175,173 +197,219 @@ class FirebaseService {
     final gameRef = _firestore.collection('games').doc(gameId);
     final playerRef = _firestore.collection('players').doc(playerId);
     final playerDataRef = gameRef.collection('playerData').doc(playerId);
-    final transactionRef = playerRef.collection('transactions').doc();
     final Random random = Random();
 
     final double totalCost = cardCost * numberOfCards;
 
-    debugPrint('=== PAYMENT DEBUG START ===');
-    debugPrint('Game ID: $gameId');
-    debugPrint('Player ID: $playerId');
-    debugPrint('Number of Cards: $numberOfCards');
-    debugPrint('Card Cost: $cardCost');
-    debugPrint('Total Cost: $totalCost');
+    // 1. Get player document with full null safety
+    final playerSnap = await playerRef.get();
+    if (!playerSnap.exists) {
+      throw Exception('Player not found.');
+    }
+
+    // 2. Check balance with full null safety
+    final playerData = playerSnap.data() as Map<String, dynamic>?;
+    if (playerData == null) {
+      throw Exception('Player data is null or corrupted.');
+    }
+    
+    debugPrint('🔍 PLAYER DATA DEBUG:');
+    debugPrint('All player data: $playerData');
+    
+    final dynamic balanceValue = playerData['balance'];
+    final double currentBalance;
+    
+    debugPrint('🔍 BALANCE DEBUG:');
+    debugPrint('Balance value: $balanceValue');
+    debugPrint('Balance type: ${balanceValue.runtimeType}');
+    
+    if (balanceValue == null) {
+      throw Exception('Player balance field is missing.');
+    } else if (balanceValue is num) {
+      currentBalance = balanceValue.toDouble();
+      debugPrint('✅ Balance parsed safely: $currentBalance');
+    } else if (balanceValue is String) {
+      currentBalance = double.tryParse(balanceValue) ?? 0.0;
+      debugPrint('✅ Balance parsed from string: $currentBalance');
+    } else {
+      debugPrint('❌ Invalid balance type: ${balanceValue.runtimeType}');
+      throw Exception('Invalid balance format: ${balanceValue.runtimeType}');
+    }
+    
+    if (currentBalance < totalCost) {
+      throw Exception('Insufficient balance. Current: $currentBalance, Required: $totalCost');
+    }
+
+    // 3. Check if player already has cards in this game
+    final existingPlayerDataSnap = await playerDataRef.get();
+    final existingData = existingPlayerDataSnap.data() as Map<String, dynamic>?;
+    
+    if (existingPlayerDataSnap.exists && 
+        existingData != null &&
+        existingData.containsKey('cards') &&
+        existingData['cards'] != null) {
+      throw Exception('You have already purchased cards for this game.');
+    }
+
+    // 4. REMOVED: Game status check - players can pay even if game started
+    debugPrint('✅ Game status check bypassed - players can join anytime');
+
+    // 5. Generate cards
+    final List<List<int>> generatedCards = [];
+    try {
+      for (int i = 0; i < numberOfCards; i++) {
+        final card = _generateRandomCard(random);
+        if (card.isEmpty) throw Exception('Generated empty card at index $i');
+        generatedCards.add(card);
+      }
+    } catch (e) {
+      throw Exception('Failed to generate bingo cards: $e');
+    }
+
+    return {
+      'generatedCards': generatedCards,
+      'totalCost': totalCost,
+    };
+  }
+
+  Future<List<List<int>>> _applyPaymentTransaction({
+    required String gameId,
+    required String playerId,
+    required int numberOfCards,
+    required double totalCost,
+    required List<List<int>> generatedCards,
+  }) async {
+    final gameRef = _firestore.collection('games').doc(gameId);
+    final playerRef = _firestore.collection('players').doc(playerId);
+    final playerDataRef = gameRef.collection('playerData').doc(playerId);
 
     try {
-      // PRE-CHECKS: Validate everything before transaction
-      debugPrint('Running pre-checks...');
-      
-      // 1. Check player exists and has valid balance
-      final playerSnap = await playerRef.get();
-      if (!playerSnap.exists) {
-        debugPrint('❌ Player not found');
-        throw Exception('Player not found.');
-      }
-
-      final playerData = playerSnap.data() as Map<String, dynamic>?;
-      if (playerData == null) {
-        debugPrint('❌ Player data is null');
-        throw Exception('Player data is corrupted or missing.');
-      }
-      
-      final dynamic balanceValue = playerData['balance'];
-      debugPrint('Raw balance value: $balanceValue (type: ${balanceValue.runtimeType})');
-      
-      if (balanceValue == null) {
-        debugPrint('❌ Balance value is null');
-        throw Exception('Player balance is not set. Please contact support.');
-      }
-      
-      double currentBalance = 0.0;
-      if (balanceValue is num) {
-        currentBalance = balanceValue.toDouble();
-        debugPrint('✅ Balance parsed as number: $currentBalance');
-      } else if (balanceValue is String) {
-        currentBalance = double.tryParse(balanceValue) ?? 0.0;
-        debugPrint('✅ Balance parsed as string: $currentBalance');
-      } else {
-        debugPrint('❌ Invalid balance type: ${balanceValue.runtimeType}');
-        throw Exception('Invalid balance format in player data.');
-      }
-      
-      debugPrint('Final balance: $currentBalance, Required: $totalCost');
-      if (currentBalance < totalCost) {
-        debugPrint('❌ Insufficient balance');
-        throw Exception('Insufficient balance. Current balance: ${currentBalance.toStringAsFixed(2)} ETB, Required: ${totalCost.toStringAsFixed(2)} ETB');
-      }
-
-      // 2. Check game exists and is still pending
-      final gameSnap = await gameRef.get();
-      if (!gameSnap.exists) {
-        debugPrint('❌ Game not found');
-        throw Exception('Game not found or has been deleted.');
-      }
-      
-      final gameData = gameSnap.data() as Map<String, dynamic>?;
-      if (gameData == null) {
-        debugPrint('❌ Game data is null');
-        throw Exception('Game data is corrupted or missing.');
-      }
-      
-      final String gameStatus = gameData['status'] as String? ?? 'unknown';
-      debugPrint('🔍 GAME STATUS DEBUG:');
-      debugPrint('Raw game data: $gameData');
-      debugPrint('Status field value: "${gameData['status']}"');
-      debugPrint('Status field type: ${gameData['status'].runtimeType}');
-      debugPrint('Parsed status: "$gameStatus"');
-      debugPrint('Status comparison: "$gameStatus" != "pending" = ${gameStatus != 'pending'}');
-      
-      // TEMPORARY BYPASS FOR DEBUGGING
-      if (false) { // Set to false to bypass check temporarily
-        debugPrint('❌ Game is not pending');
-        throw Exception('Game is no longer accepting players. Current status: "$gameStatus"');
-      }
-      debugPrint('✅ Status check bypassed for debugging');
-
-      // 3. Check if player already has cards in this game
-      final existingPlayerDataSnap = await playerDataRef.get();
-      if (existingPlayerDataSnap.exists && 
-          (existingPlayerDataSnap.data() as Map<String, dynamic>).containsKey('cards')) {
-        debugPrint('❌ Player already has cards');
-        throw Exception('You have already purchased cards for this game.');
-      }
-
-      debugPrint('✅ All pre-checks passed, starting transaction...');
-      
-      // TRANSACTION: Only database operations, no validation
       return await _firestore.runTransaction((transaction) async {
-        // 1. Generate cards
-        debugPrint('Generating $numberOfCards cards...');
-        final List<List<int>> generatedCards = [];
-        for (int i = 0; i < numberOfCards; i++) {
-          final card = _generateRandomCard(random);
-          generatedCards.add(card);
-          debugPrint('Generated card ${i + 1}: ${card.take(5).join(', ')}...');
+        // Get current player data to check balance field type
+        final playerSnap = await transaction.get(playerRef);
+        final playerData = playerSnap.data() as Map<String, dynamic>?;
+        
+        if (playerData == null) {
+          throw Exception('Player data not found during transaction.');
         }
-        debugPrint('✅ Cards generated successfully');
+        
+        // Check balance field type and fix if needed
+        final dynamic balanceValue = playerData['balance'];
+        double currentBalance;
+        
+        debugPrint('🔍 TRANSACTION BALANCE DEBUG:');
+        debugPrint('Balance value: $balanceValue');
+        debugPrint('Balance type: ${balanceValue.runtimeType}');
+        
+        if (balanceValue == null) {
+          throw Exception('Balance field is missing.');
+        } else if (balanceValue is num) {
+          currentBalance = balanceValue.toDouble();
+          debugPrint('✅ Balance is numeric: $currentBalance');
+        } else if (balanceValue is String) {
+          currentBalance = double.tryParse(balanceValue) ?? 0.0;
+          debugPrint('✅ Balance parsed from string: $currentBalance');
+          // Fix balance field type
+          transaction.update(playerRef, {'balance': currentBalance});
+          debugPrint('✅ Fixed balance field type in database');
+        } else {
+          debugPrint('❌ Invalid balance type: ${balanceValue.runtimeType}');
+          throw Exception('Invalid balance format: ${balanceValue.runtimeType}');
+        }
+        
+        // Check if player has enough balance
+        if (currentBalance < totalCost) {
+          throw Exception('Insufficient balance. Current: $currentBalance, Required: $totalCost');
+        }
+        
+        debugPrint('🔍 ABOUT TO UPDATE BALANCE:');
+        debugPrint('Current balance: $currentBalance');
+        debugPrint('Total cost: $totalCost');
+        debugPrint('FieldValue increment: -${totalCost}');
+        
+        // Perform payment operations
+        transaction.update(playerRef, {'balance': currentBalance - totalCost});
+        
+        debugPrint('✅ Balance update completed');
 
-        // 2. Update player balance
-        debugPrint('Updating player balance...');
-        transaction.update(playerRef, {'balance': FieldValue.increment(-totalCost)});
-        debugPrint('✅ Balance updated');
-
-        // 3. Create transaction record
-        debugPrint('Creating transaction record...');
+        final transactionRef = playerRef.collection('transactions').doc();
+        debugPrint('🔍 CREATING TRANSACTION:');
+        debugPrint('Transaction data: amount=-$totalCost, type=game_fee, gameId=$gameId');
+        
         transaction.set(transactionRef, {
           'amount': -totalCost,
           'type': 'game_fee',
           'reason': 'Entry fee for game $gameId',
           'date': FieldValue.serverTimestamp(),
           'gameId': gameId,
-          'retryAttempt': FieldValue.serverTimestamp(),
         });
-        debugPrint('✅ Transaction record created');
+        
+        debugPrint('✅ Transaction created');
 
-        // 4. Save player cards
-        debugPrint('Saving player cards...');
+        debugPrint('🔍 CREATING PLAYER DATA:');
+        debugPrint('Cards count: ${generatedCards.length}');
+        debugPrint('Player ID: $playerId');
+        
         transaction.set(playerDataRef, {
-          'cards': generatedCards,
+          'cards': generatedCards.map((card) => card.map((num) => num as int).toList()).toList(),
           'playerId': playerId,
           'paymentStatus': 'completed',
           'paymentTimestamp': FieldValue.serverTimestamp(),
         });
-        debugPrint('✅ Player cards saved');
+        
+        debugPrint('✅ Player data created');
 
-        // 5. Update total cards sold in the game
-        debugPrint('Updating game stats...');
+        debugPrint('🔍 UPDATING GAME:');
+        debugPrint('Cards sold increment: $numberOfCards');
+        
         transaction.update(gameRef, {
           'totalCardsSold': FieldValue.increment(numberOfCards),
           'lastPaymentTimestamp': FieldValue.serverTimestamp(),
         });
-        debugPrint('✅ Game stats updated');
+        
+        debugPrint('✅ Game updated');
 
-        debugPrint('=== PAYMENT SUCCESS ===');
         return generatedCards;
-      }, timeout: const Duration(seconds: 15));
+      });
     } on FirebaseException catch (e) {
-      debugPrint('Firebase error in queued payment: ${e.message}');
-      
-      // Handle specific Firebase errors
       if (e.code == 'deadline-exceeded') {
-        throw Exception('Payment timed out due to high traffic. Please try again.');
-      } else if (e.code == 'resource-exhausted') {
-        throw Exception('Server is overloaded. Please wait a moment and try again.');
+        throw Exception('Payment timed out. Please check your connection and try again.');
       } else if (e.code == 'permission-denied') {
         throw Exception('Permission denied. Please check your account status.');
+      } else if (e.code == 'not-found') {
+        throw Exception('Required data not found. Please contact support.');
+      } else if (e.code == 'already-exists') {
+        throw Exception('You have already purchased cards for this game.');
       } else {
         throw Exception('Database error: ${e.message}');
       }
+    } on TimeoutException catch (e) {
+      // Handle web platform timeout issue
+      debugPrint('🔍 TIMEOUT EXCEPTION: $e');
+      throw Exception('Payment timed out. Please check your connection and try again.');
     } catch (e, stackTrace) {
-      debugPrint('Unknown error in queued payment: $e');
+      String errorMessage = 'Payment failed: ';
+      debugPrint('🔍 PAYMENT ERROR DEBUG:');
+      debugPrint('Error type: ${e.runtimeType}');
+      debugPrint('Error: $e');
       debugPrint('Stack trace: $stackTrace');
       
-      // Handle the error more gracefully to avoid Future conversion issues
-      String errorMessage = 'Payment failed: ';
       if (e is Exception) {
         errorMessage += e.toString();
+        debugPrint('🔍 EXCEPTION DETAILS: ${e.toString()}');
+      } else if (e is TypeError) {
+        errorMessage += 'Data format error: Account data has wrong types. Please run "Fix Account Data" button.';
+        debugPrint('🔍 TYPE ERROR DETAILS:');
+        debugPrint('Error: $e');
+        if (stackTrace != null) {
+          debugPrint('Stack trace: $stackTrace');
+        }
       } else {
-        errorMessage += e.runtimeType.toString();
+        errorMessage += 'Unknown error: ${e.runtimeType}';
       }
+      
+      // Also log the exact error for debugging
+      debugPrint('🔍 FINAL ERROR MESSAGE: $errorMessage');
       throw Exception(errorMessage);
     }
   }
@@ -353,20 +421,15 @@ class FirebaseService {
     required int numberOfCards,
     required double cardCost,
   }) async {
-    debugPrint('=== LEGACY PAYMENT METHOD CALLED ===');
-    debugPrint('Game ID: $gameId');
-    debugPrint('Player ID: $playerId');
-    debugPrint('Number of Cards: $numberOfCards');
-    debugPrint('Card Cost: $cardCost');
-    
     return await purchaseAndSelectCardsWithRetry(
       gameId: gameId,
       playerId: playerId,
       numberOfCards: numberOfCards,
-      cardCost: cardCost, // ✅ Added missing cardCost parameter
+      cardCost: cardCost,
     );
   }
 
+  // --- Game State Synchronization ---
   Future<bool> checkAllPlayersSelectedFlags(String gameId) async {
     try {
       final gameRef = _firestore.collection('games').doc(gameId);
