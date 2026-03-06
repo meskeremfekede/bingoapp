@@ -20,20 +20,10 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
 
   Future<void> _joinGame() async {
     if (_formKey.currentState!.validate()) {
-      setState(() {
-        _isLoading = true;
-      });
+      setState(() { _isLoading = true; });
 
       final user = _auth.currentUser;
-      if (user == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('You must be logged in to join a game.')),
-        );
-        setState(() {
-          _isLoading = false;
-        });
-        return;
-      }
+      if (user == null) return;
 
       try {
         final gameQuery = await FirebaseFirestore.instance
@@ -43,15 +33,16 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
             .get();
 
         if (gameQuery.docs.isEmpty) {
-          throw Exception('No game found with that code. Please check the code and try again.');
+          throw Exception('Incorrect game code.');
         }
 
         final gameId = gameQuery.docs.first.id;
-        final gameData = gameQuery.docs.first.data();
-        final gameStatus = gameData['status'] as String? ?? 'pending';
+        
+        // 1. Join Game Logic
+        await _firebaseService.joinGameLobby(gameId: gameId, playerId: user.uid);
 
-        // Allow joining even if game started, but go to card selection
         if (mounted) {
+          // 2. Journey Step: Move straight to Card Selection
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(builder: (context) => CardSelectionScreen(gameId: gameId)),
@@ -60,15 +51,11 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to join game: ${e.toString()}')),
+            SnackBar(content: Text(e.toString().replaceFirst("Exception: ", ""))),
           );
         }
       } finally {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
+        if (mounted) setState(() { _isLoading = false; });
       }
     }
   }
@@ -76,34 +63,41 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Join Game'),
-      ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                TextFormField(
-                  controller: _gameCodeController,
-                  decoration: const InputDecoration(labelText: 'Enter Game Code'),
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Please enter a game code';
-                    }
-                    return null;
-                  },
+      backgroundColor: const Color(0xFF0A0A1A),
+      appBar: AppBar(title: const Text('Join Match'), backgroundColor: Colors.transparent),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.qr_code_scanner, size: 80, color: Colors.purpleAccent),
+              const SizedBox(height: 32),
+              TextFormField(
+                controller: _gameCodeController,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white, fontSize: 24),
+                decoration: InputDecoration(
+                  hintText: 'ENTER GAME CODE',
+                  hintStyle: const TextStyle(color: Colors.white24),
+                  filled: true,
+                  fillColor: const Color(0xFF1C1C3A),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
                 ),
-                const SizedBox(height: 20),
-                ElevatedButton(
+                validator: (value) => (value == null || value.isEmpty) ? 'Required' : null,
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: ElevatedButton(
                   onPressed: _isLoading ? null : _joinGame,
-                  child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : const Text('Join Game'),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.purpleAccent),
+                  child: _isLoading ? const CircularProgressIndicator() : const Text('CONTINUE TO PAYMENT'),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),

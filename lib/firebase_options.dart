@@ -41,7 +41,7 @@ class DefaultFirebaseOptions {
     apiKey: 'AIzaSyBI71Ylng15kYkggs7OVCFeb5SuMIHKlm4',
     appId: '1:1087473816518:android:d19942735a297d2e7018c7',
     messagingSenderId: '1087473816518',
-    projectId: 'myingoapp-c925a',
+    projectId: 'mybingoapp-c925a',
     databaseURL: 'https://mybingoapp-c925a-default-rtdb.europe-west1.firebasedatabase.app',
     storageBucket: 'mybingoapp-c925a.appspot.com',
   );

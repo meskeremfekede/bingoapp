@@ -243,84 +243,127 @@ class _PlayerGameBoardScreenState extends State<PlayerGameBoardScreen> {
           );
         }
 
-        final playerData = playerSnapshot.data!.data() as Map<String, dynamic>? ?? {};
-        final List<dynamic> cardsData = playerData['cards'] as List<dynamic>? ?? [];
-        final List<dynamic> selectedFlags = playerData['selectedFlags'] as List<dynamic>? ?? [];
-        final String paymentStatus = playerData['paymentStatus'] as String? ?? 'unknown';
+        // Also listen to game data for cards
+        return StreamBuilder<DocumentSnapshot>(
+          stream: _getGameStream(),
+          builder: (context, gameSnapshot) {
+            if (!gameSnapshot.hasData || gameSnapshot.data?.data() == null) {
+              return const Center(child: CircularProgressIndicator());
+            }
 
-        debugPrint('=== GAME BOARD DEBUG ===');
-        debugPrint('Player ID: ${widget.playerId}');
-        debugPrint('Game ID: ${widget.gameId}');
-        debugPrint('Cards data count: ${cardsData.length}');
-        debugPrint('Selected flags: ${selectedFlags.toList()}');
-        debugPrint('Payment status: $paymentStatus');
+            final playerData = playerSnapshot.data!.data() as Map<String, dynamic>? ?? {};
+            
+            // Read cards from game document instead of playerData subcollection
+            final gameData = gameSnapshot.data!.data() as Map<String, dynamic>? ?? {};
+            final cardsMap = gameData['${widget.playerId}_cards'] as Map<String, dynamic>? ?? {};
+            final List<List<int>> cardsData = [];
+            
+            // Convert string cards back to List<int>
+            final cardKeys = cardsMap.keys.where((key) => key.startsWith('${widget.playerId}_card')).toList();
+            cardKeys.sort(); // Sort to ensure correct order
+            
+            for (final cardKey in cardKeys) {
+              final cardString = cardsMap[cardKey] as String? ?? '';
+              debugPrint('Processing card $cardKey: $cardString');
+              
+              if (cardString.isNotEmpty) {
+                final numbers = cardString.split(',').map((s) => int.tryParse(s.trim()) ?? 0).toList();
+                if (numbers.length == 25) { // Bingo card should have 25 numbers
+                  cardsData.add(numbers);
+                  debugPrint('✅ Added card with ${numbers.length} numbers');
+                } else {
+                  debugPrint('❌ Invalid card length: ${numbers.length}');
+                }
+              }
+            }
+            
+            // Read flags from game document
+            final List<dynamic> selectedFlags = gameData['${widget.playerId}_selectedFlags'] as List<dynamic>? ?? [];
+            final String paymentStatus = 'paid'; // If we got here, payment was successful
 
-        // Check if player has selected flags
-        if (selectedFlags.isEmpty) {
-          debugPrint('❌ No flags selected - showing flag selection prompt');
-          return Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.flag, color: Colors.amber, size: 48),
-              const SizedBox(height: 16),
-              const Text(
-                "You need to select your flag numbers first!",
-                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                "Please go back and select your flag numbers before joining the game.",
-                style: TextStyle(color: Colors.white70, fontSize: 14),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.of(context).pop(); // Go back to flag selection
-                },
-                icon: const Icon(Icons.arrow_back),
-                label: const Text('Go Back to Flag Selection'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.amber,
-                  foregroundColor: Colors.black,
-                ),
-              ),
-            ],
-          );
-        }
+            debugPrint('=== GAME BOARD DEBUG ===');
+            debugPrint('Player ID: ${widget.playerId}');
+            debugPrint('Game ID: ${widget.gameId}');
+            debugPrint('Cards map keys: ${cardsMap.keys.toList()}');
+            debugPrint('Cards data count: ${cardsData.length}');
+            debugPrint('Selected flags: ${selectedFlags.toList()}');
+            debugPrint('Payment status: $paymentStatus');
+            
+            // Debug: Print first few cards
+            for (int i = 0; i < cardsData.length && i < 2; i++) {
+              debugPrint('Card $i: ${cardsData[i]}');
+            }
 
-        if (cardsData.isEmpty) {
-          return Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Text("You have no cards in this game.", style: TextStyle(color: Colors.white70)),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: () async {
-                  await FirebaseFirestore.instance.clearPersistence();
-                  setState(() {});
-                },
-                icon: const Icon(Icons.refresh),
-                label: const Text('Refresh'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blue,
-                  foregroundColor: Colors.white,
-                ),
-              ),
-            ],
-          );
-        }
+            // Check if player has selected flags
+            if (selectedFlags.isEmpty) {
+              debugPrint('❌ No flags selected - showing flag selection prompt');
+              return Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.flag, color: Colors.amber, size: 48),
+                  const SizedBox(height: 16),
+                  const Text(
+                    "You need to select your flag numbers first!",
+                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.amber,
+                      foregroundColor: Colors.black,
+                    ),
+                    child: const Text('Go Back to Select Flags'),
+                  ),
+                ],
+              );
+            }
 
-        final List<List<int>> safeCards = cardsData.map((card) {
-          if (card is List) {
-            return card.map((num) => (num as int? ?? 0)).toList();
-          } else {
-            return <int>[];
-          }
-        }).where((card) => card.isNotEmpty).toList();
-        
-        return _buildCardList(safeCards, calledNumbers);
+            if (cardsData.isEmpty) {
+              debugPrint('❌ No cards found - showing waiting message');
+              return Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.hourglass_empty, color: Colors.white70, size: 48),
+                  const SizedBox(height: 16),
+                  const Text(
+                    "Waiting for cards to be assigned...",
+                    style: TextStyle(color: Colors.white70, fontSize: 16),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    "Cards should appear after payment is completed.",
+                    style: TextStyle(color: Colors.white54, fontSize: 12),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    onPressed: () => setState(() {}),
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Refresh'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ],
+              );
+            }
+
+            debugPrint('✅ Found ${cardsData.length} cards - building game board');
+
+            final List<List<int>> safeCards = cardsData.map((card) {
+              if (card is List) {
+                return card.map((num) => (num as int? ?? 0)).toList();
+              } else {
+                return <int>[];
+              }
+            }).where((card) => card.isNotEmpty).toList();
+            
+            return _buildCardList(safeCards, calledNumbers);
+          },
+        );
       },
     );
   }

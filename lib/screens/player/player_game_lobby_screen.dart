@@ -1,138 +1,110 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:mygame/screens/player/player_card_selection_screen.dart';
-import 'dart:developer' as developer;
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:mygame/screens/player/player_game_board_screen.dart';
 
-class PlayerGameLobbyScreen extends StatefulWidget {
+class PlayerGameLobbyScreen extends StatelessWidget {
   final String gameId;
 
   const PlayerGameLobbyScreen({super.key, required this.gameId});
 
-  @override
-  State<PlayerGameLobbyScreen> createState() => _PlayerGameLobbyScreenState();
-}
-
-class _PlayerGameLobbyScreenState extends State<PlayerGameLobbyScreen> {
-
   Stream<DocumentSnapshot> _getGameStream() {
-    return FirebaseFirestore.instance.collection('games').doc(widget.gameId).snapshots();
+    return FirebaseFirestore.instance.collection('games').doc(gameId).snapshots();
   }
 
   @override
   Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+
     return StreamBuilder<DocumentSnapshot>(
       stream: _getGameStream(),
       builder: (context, snapshot) {
         if (snapshot.hasData && snapshot.data!.exists) {
           final gameData = snapshot.data!.data()! as Map<String, dynamic>;
           final status = gameData['status'] as String? ?? 'pending';
-          
-          developer.log('=== GAME LOBBY DEBUG ===');
-          developer.log('Game ID: ${widget.gameId}');
-          developer.log('Game Status: $status');
 
-          // If game is ongoing, navigate to card selection
+          // JOURNEY STEP: If admin starts the game, move immediately to Game Board
+          // because the player has already paid and selected flags.
           if (status == 'ongoing') {
-            developer.log('✅ Game is ongoing - navigating to card selection');
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (context) => CardSelectionScreen(gameId: widget.gameId)),
-                (Route<dynamic> route) => false,
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => PlayerGameBoardScreen(
+                    gameId: gameId,
+                    playerId: user?.uid ?? '',
+                  ),
+                ),
               );
             });
-          } else {
-            developer.log('⏳ Game is not ongoing yet - staying in lobby (status: $status)');
           }
         }
 
-        // Build the lobby UI while waiting
         return Scaffold(
           backgroundColor: const Color(0xFF0A0A1A),
           appBar: AppBar(
-            title: const Text('Game Lobby'),
-            backgroundColor: const Color(0xFF0A0A1A),
+            title: const Text('WAITING ROOM'),
+            backgroundColor: Colors.transparent,
             elevation: 0,
             automaticallyImplyLeading: false,
           ),
-          body: _buildLobbyContent(context, snapshot),
+          body: _buildLobbyContent(snapshot),
         );
       },
     );
   }
 
-  Widget _buildLobbyContent(BuildContext context, AsyncSnapshot<DocumentSnapshot> snapshot) {
+  Widget _buildLobbyContent(AsyncSnapshot<DocumentSnapshot> snapshot) {
     if (snapshot.connectionState == ConnectionState.waiting) {
       return const Center(child: CircularProgressIndicator());
     }
     if (!snapshot.hasData || !snapshot.data!.exists) {
-      return const Center(child: Text('Game not found or has been cancelled.', style: TextStyle(color: Colors.white)));
+      return const Center(child: Text('Game not found.', style: TextStyle(color: Colors.white)));
     }
 
-    final gameData = snapshot.data!.data()! as Map<String, dynamic>;
-    final playersJoined = List<String>.from(gameData['players'] ?? []);
-
     return Padding(
-      padding: const EdgeInsets.all(16.0),
+      padding: const EdgeInsets.all(24.0),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Center(
-            child: Column(
-              children: [
-                const Text('Waiting for admin to start the game...', style: TextStyle(color: Colors.amber, fontSize: 16)),
-                const SizedBox(height: 16),
-                const CircularProgressIndicator(),
-                const SizedBox(height: 16),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    developer.log('🔄 Manual refresh triggered by user');
-                    setState(() {});
-                  },
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Check if Game Started'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    foregroundColor: Colors.white,
-                  ),
-                ),
-              ],
-            ),
+          const Icon(Icons.hourglass_empty, size: 80, color: Colors.amber),
+          const SizedBox(height: 32),
+          const Text(
+            'YOU ARE READY!',
+            style: TextStyle(color: Colors.greenAccent, fontSize: 28, fontWeight: FontWeight.bold),
           ),
-          const SizedBox(height: 24),
-          const Text('Game Settings', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-          const Divider(color: Colors.white24, height: 20),
-          _buildInfoRow('Winning Pattern:', gameData['winningPattern'] ?? 'N/A'), // Fixed spelling
-          _buildInfoRow('Card Cost:', '${(gameData['cardCost'] as num?)?.toDouble() ?? 0.0} Birr'),
-          const SizedBox(height: 24),
-          const Text('Joined Players', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-          const Divider(color: Colors.white24, height: 20),
-          Expanded(
-            child: ListView.builder(
-              itemCount: playersJoined.length,
-              itemBuilder: (context, index) {
-                return Card(
-                  color: const Color(0xFF1C1C3A),
-                  child: ListTile(
-                    leading: const Icon(Icons.person, color: Colors.white70),
-                    title: Text(playersJoined[index], style: const TextStyle(color: Colors.white)),
-                  ),
-                );
-              },
-            ),
+          const SizedBox(height: 16),
+          const Text(
+            'Payment Confirmed • Identity Selected',
+            style: TextStyle(color: Colors.white70, fontSize: 16),
           ),
+          const SizedBox(height: 48),
+          const CircularProgressIndicator(color: Colors.purpleAccent),
+          const SizedBox(height: 24),
+          const Text(
+            'Waiting for the admin to start the match...',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white54, fontSize: 16, fontStyle: FontStyle.italic),
+          ),
+          const SizedBox(height: 48),
+          _buildRequirementChip('Join Code', true),
+          _buildRequirementChip('Card Selection', true),
+          _buildRequirementChip('Payment', true),
+          _buildRequirementChip('Identity (Flags)', true),
         ],
       ),
     );
   }
 
-  Widget _buildInfoRow(String label, String value) {
+  Widget _buildRequirementChip(String label, bool isDone) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4.0),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(label, style: const TextStyle(color: Colors.white70)),
-          Text(value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          Icon(Icons.check_circle, color: isDone ? Colors.green : Colors.grey, size: 20),
+          const SizedBox(width: 8),
+          Text(label, style: TextStyle(color: isDone ? Colors.white : Colors.white24, fontSize: 16)),
         ],
       ),
     );

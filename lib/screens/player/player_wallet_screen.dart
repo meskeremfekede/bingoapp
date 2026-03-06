@@ -100,6 +100,17 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
         // Fix balance if missing or invalid
         if (!data.containsKey('balance') || data['balance'] == null) {
           updates['balance'] = 500.0;
+        } else if (data['balance'] is int) {
+          // Convert int balance to double
+          updates['balance'] = (data['balance'] as int).toDouble();
+        } else if (data['balance'] is String) {
+          // Convert string balance to double
+          final parsed = double.tryParse(data['balance'] as String);
+          if (parsed != null) {
+            updates['balance'] = parsed;
+          } else {
+            updates['balance'] = 500.0;
+          }
         }
         
         // Fix name if missing
