@@ -41,6 +41,7 @@ class _PlayersScreenState extends State<PlayersScreen> {
         });
   }
 
+  // UPDATED: More robust history view with clear empty states
   void _showPlayerHistory(Player player) {
     showModalBottomSheet(
       context: context,
@@ -54,13 +55,15 @@ class _PlayersScreenState extends State<PlayersScreen> {
         builder: (context, scrollController) => Column(
           children: [
             Padding(
-              padding: const EdgeInsets.all(16.0),
+              padding: const EdgeInsets.all(20.0),
               child: Column(
                 children: [
-                  const Icon(Icons.history, color: Colors.amber, size: 40),
-                  const SizedBox(height: 8),
-                  Text('${player.name}\'s History', style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-                  Text('ID: ${player.id.substring(0, 10)}...', style: const TextStyle(color: Colors.white38, fontSize: 12)),
+                  Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(2))),
+                  const SizedBox(height: 20),
+                  const Icon(Icons.account_balance_wallet, color: Colors.amber, size: 40),
+                  const SizedBox(height: 12),
+                  Text(player.name.toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 1.1)),
+                  const Text('MATCH & PAYMENT HISTORY', style: TextStyle(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.bold)),
                 ],
               ),
             ),
@@ -74,11 +77,25 @@ class _PlayersScreenState extends State<PlayersScreen> {
                     .orderBy('date', descending: true)
                     .snapshots(),
                 builder: (context, snapshot) {
-                  if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-                  if (snapshot.data!.docs.isEmpty) return const Center(child: Text('No transaction history.', style: TextStyle(color: Colors.white24)));
+                  if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator(color: Colors.purpleAccent));
+                  
+                  if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                    return Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.receipt_long, color: Colors.white.withOpacity(0.05), size: 80),
+                          const SizedBox(height: 16),
+                          const Text('No transactions yet.', style: TextStyle(color: Colors.white24, fontSize: 16)),
+                          const Text('Activity will appear after the first game.', style: TextStyle(color: Colors.white10, fontSize: 12)),
+                        ],
+                      ),
+                    );
+                  }
 
                   return ListView.builder(
                     controller: scrollController,
+                    padding: const EdgeInsets.only(bottom: 32),
                     itemCount: snapshot.data!.docs.length,
                     itemBuilder: (context, index) {
                       final tx = snapshot.data!.docs[index].data() as Map<String, dynamic>;
@@ -87,13 +104,23 @@ class _PlayersScreenState extends State<PlayersScreen> {
                       final isPlus = amount > 0;
 
                       return Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                        decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(10)),
+                        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1C1C3A),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white.withOpacity(0.05))
+                        ),
                         child: ListTile(
-                          leading: Icon(isPlus ? Icons.arrow_upward : Icons.arrow_downward, color: isPlus ? Colors.greenAccent : Colors.redAccent),
-                          title: Text(tx['reason'] ?? 'Unknown', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-                          subtitle: Text(DateFormat('dd MMM yyyy, HH:mm').format(date), style: const TextStyle(color: Colors.white38, fontSize: 11)),
-                          trailing: Text('${isPlus ? "+" : ""}${amount.toStringAsFixed(2)} ETB', style: TextStyle(color: isPlus ? Colors.greenAccent : Colors.redAccent, fontWeight: FontWeight.bold)),
+                          leading: CircleAvatar(
+                            backgroundColor: isPlus ? Colors.green.withOpacity(0.1) : Colors.red.withOpacity(0.1),
+                            child: Icon(isPlus ? Icons.add : Icons.remove, color: isPlus ? Colors.greenAccent : Colors.redAccent, size: 18),
+                          ),
+                          title: Text(tx['reason'] ?? 'Game Match', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                          subtitle: Text(DateFormat('MMM dd, yyyy • HH:mm').format(date), style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                          trailing: Text(
+                            '${isPlus ? "+" : ""}${amount.toStringAsFixed(2)}', 
+                            style: TextStyle(color: isPlus ? Colors.greenAccent : Colors.white70, fontWeight: FontWeight.bold, fontSize: 15)
+                          ),
                         ),
                       );
                     },
@@ -113,20 +140,21 @@ class _PlayersScreenState extends State<PlayersScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Add Cash: ${player.name}'),
+        backgroundColor: const Color(0xFF1C1C3A),
+        title: Text('ADD CASH: ${player.name}', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(controller: amountController, decoration: const InputDecoration(labelText: 'Amount'), keyboardType: TextInputType.number),
-          TextField(controller: reasonController, decoration: const InputDecoration(labelText: 'Reason')),
+          TextField(controller: amountController, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Amount (ETB)', labelStyle: TextStyle(color: Colors.white38)), keyboardType: TextInputType.number),
+          TextField(controller: reasonController, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Reason', labelStyle: TextStyle(color: Colors.white38))),
         ]),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCEL', style: TextStyle(color: Colors.white38))),
           ElevatedButton(onPressed: () async {
             final amt = double.tryParse(amountController.text) ?? 0;
             if (amt > 0) {
-              await _firebaseService.addCashToPlayer(playerId: player.id, amount: amt, reason: reasonController.text);
+              await _firebaseService.addCashToPlayer(playerId: player.id, amount: amt, reason: reasonController.text.isEmpty ? 'Manual Deposit' : reasonController.text);
               Navigator.pop(context);
             }
-          }, child: const Text('Add'))
+          }, style: ElevatedButton.styleFrom(backgroundColor: Colors.green), child: const Text('ADD FUNDS'))
         ],
       ),
     );
@@ -138,20 +166,21 @@ class _PlayersScreenState extends State<PlayersScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Deduct Cash: ${player.name}'),
+        backgroundColor: const Color(0xFF1C1C3A),
+        title: Text('DEDUCT CASH: ${player.name}', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(controller: amountController, decoration: const InputDecoration(labelText: 'Amount'), keyboardType: TextInputType.number),
-          TextField(controller: reasonController, decoration: const InputDecoration(labelText: 'Reason')),
+          TextField(controller: amountController, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Amount (ETB)', labelStyle: TextStyle(color: Colors.white38)), keyboardType: TextInputType.number),
+          TextField(controller: reasonController, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Reason', labelStyle: TextStyle(color: Colors.white38))),
         ]),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCEL', style: TextStyle(color: Colors.white38))),
           ElevatedButton(onPressed: () async {
             final amt = double.tryParse(amountController.text) ?? 0;
             if (amt > 0) {
-              await _firebaseService.deductCashFromPlayer(playerId: player.id, amount: amt, reason: reasonController.text);
+              await _firebaseService.deductCashFromPlayer(playerId: player.id, amount: amt, reason: reasonController.text.isEmpty ? 'Manual Withdrawal' : reasonController.text);
               Navigator.pop(context);
             }
-          }, child: const Text('Deduct'))
+          }, style: ElevatedButton.styleFrom(backgroundColor: Colors.red), child: const Text('DEDUCT FUNDS'))
         ],
       ),
     );
@@ -161,7 +190,7 @@ class _PlayersScreenState extends State<PlayersScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A1A),
-      appBar: AppBar(title: const Text('PLAYER MANAGEMENT'), backgroundColor: Colors.transparent),
+      appBar: AppBar(title: const Text('PLAYER MANAGEMENT', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1.2)), backgroundColor: Colors.transparent, elevation: 0),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -170,36 +199,44 @@ class _PlayersScreenState extends State<PlayersScreen> {
               onChanged: (v) => setState(() => _searchQuery = v),
               style: const TextStyle(color: Colors.white),
               decoration: InputDecoration(
-                hintText: 'Search by name or phone',
+                hintText: 'Search player name or phone...',
                 hintStyle: const TextStyle(color: Colors.white24),
-                prefixIcon: const Icon(Icons.search, color: Colors.white24),
+                prefixIcon: const Icon(Icons.search, color: Colors.purpleAccent),
                 filled: true,
                 fillColor: const Color(0xFF1C1C3A),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             Expanded(
               child: StreamBuilder<PlayerData>(
                 stream: _getPlayersStream(),
                 builder: (context, snapshot) {
-                  if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                  if (!snapshot.hasData) return const Center(child: CircularProgressIndicator(color: Colors.purpleAccent));
                   final players = snapshot.data!.players;
+                  
+                  if (players.isEmpty) return const Center(child: Text('No players found.', style: TextStyle(color: Colors.white24)));
+
                   return ListView.builder(
                     itemCount: players.length,
                     itemBuilder: (context, index) {
                       final p = players[index];
                       return Card(
                         color: const Color(0xFF1C1C3A),
-                        margin: const EdgeInsets.only(bottom: 8),
+                        margin: const EdgeInsets.only(bottom: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                         child: ListTile(
-                          onTap: () => _showPlayerHistory(p), // SHOW HISTORY ON TAP
-                          leading: CircleAvatar(backgroundColor: Colors.purple, child: Text(p.name.substring(0, 1).toUpperCase())),
+                          onTap: () => _showPlayerHistory(p),
+                          leading: CircleAvatar(
+                            backgroundColor: Colors.purpleAccent.withOpacity(0.2), 
+                            child: Text(p.name.substring(0, 1).toUpperCase(), style: const TextStyle(color: Colors.purpleAccent, fontWeight: FontWeight.bold))
+                          ),
                           title: Text(p.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                          subtitle: Text('${p.balance.toStringAsFixed(2)} ETB', style: const TextStyle(color: Colors.greenAccent)),
+                          subtitle: Text('${p.balance.toStringAsFixed(2)} ETB', style: const TextStyle(color: Colors.greenAccent, fontSize: 13, fontWeight: FontWeight.w500)),
                           trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                            IconButton(icon: const Icon(Icons.add_circle_outline, color: Colors.green), onPressed: () => _showAddCashDialog(p)),
-                            IconButton(icon: const Icon(Icons.remove_circle_outline, color: Colors.orange), onPressed: () => _showDeductCashDialog(p)),
+                            IconButton(icon: const Icon(Icons.add_circle_outline, color: Colors.green, size: 28), onPressed: () => _showAddCashDialog(p)),
+                            const SizedBox(width: 4),
+                            IconButton(icon: const Icon(Icons.remove_circle_outline, color: Colors.orange, size: 28), onPressed: () => _showDeductCashDialog(p)),
                           ]),
                         ),
                       );

@@ -133,6 +133,7 @@ class _PlayerGameBoardScreenState extends State<PlayerGameBoardScreen> {
                       child: Text('COMPETITORS', style: TextStyle(color: Colors.white38, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.1)),
                     ),
                     _buildCompetitorsGrid(List<String>.from(gameData['players'] ?? [])),
+                    const SizedBox(height: 32),
                   ],
                 ),
               ),
@@ -149,7 +150,10 @@ class _PlayerGameBoardScreenState extends State<PlayerGameBoardScreen> {
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1C1C3A),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: const BorderSide(color: Colors.amber, width: 2)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: const BorderSide(color: Colors.amber, width: 2),
+        ),
         title: Text(isYou ? '🏆 YOU WON! 🏆' : '🔥 BINGO! 🔥', textAlign: TextAlign.center, style: const TextStyle(color: Colors.amber, fontSize: 24, fontWeight: FontWeight.bold)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -158,7 +162,7 @@ class _PlayerGameBoardScreenState extends State<PlayerGameBoardScreen> {
             const SizedBox(height: 24),
             const Text('Match Winner:', style: TextStyle(color: Colors.white70, fontSize: 14)),
             const SizedBox(height: 4),
-            PlayerNameWidget(playerId: id), 
+            PlayerNameWidget(playerId: id, textStyle: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)), 
             const SizedBox(height: 16),
             const Text('Game Identity:', style: TextStyle(color: Colors.white38, fontSize: 12)),
             Text('FLAG #$nickname', style: const TextStyle(color: Colors.greenAccent, fontSize: 32, fontWeight: FontWeight.w900)),
@@ -317,12 +321,26 @@ class _PlayerGameBoardScreenState extends State<PlayerGameBoardScreen> {
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, childAspectRatio: 3.5, crossAxisSpacing: 12, mainAxisSpacing: 12),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2, 
+        childAspectRatio: 3.5, 
+        crossAxisSpacing: 12, 
+        mainAxisSpacing: 12
+      ),
       itemCount: competitors.length,
       itemBuilder: (context, index) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 12),
-        decoration: BoxDecoration(color: const Color(0xFF1C1C3A), borderRadius: BorderRadius.circular(8)),
-        child: Center(child: PlayerNameWidget(playerId: competitors[index], textStyle: const TextStyle(color: Colors.white70, fontSize: 12))),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1C1C3A), 
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.white.withOpacity(0.05))
+        ),
+        child: Center(
+          child: PlayerNameWidget(
+            playerId: competitors[index], 
+            textStyle: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w500)
+          )
+        ),
       ),
     );
   }

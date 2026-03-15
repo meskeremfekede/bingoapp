@@ -1,11 +1,6 @@
 # Multiplayer Bingo Game
-
 This document outlines the features and logic for a multiplayer number-calling game.
-
----
-
 ## Admin Side Features
-
 ### 1. Game Creation
 - **Fields:** Game Name, Game Code, Max Players, Max Cards per Player, Winning Pattern, Card Cost.
 - **Action:** Creates a new game document in Firebase.
@@ -23,8 +18,6 @@ This document outlines the features and logic for a multiplayer number-calling g
 ### 4. Admin Profile/Settings
 - **Change Password:** A dedicated section to update admin credentials.
 - **Registration Code:** View and change the current game registration code.
-
----
 
 ## Player Side Features
 
@@ -73,8 +66,6 @@ This document outlines the features and logic for a multiplayer number-calling g
 - **Profile Details:** Name, Email, Change Password option.
 - **Rank Display:** Shows the player's rank (e.g., "Gold") based on wins or total prize money.
 
----
-
 ## Core Logic & Technical Requirements
 
 ### Firebase Structure
@@ -86,3 +77,4 @@ This document outlines the features and logic for a multiplayer number-calling g
 2.  **Player Join:** Player's balance is checked. The card cost is deducted and added to the game's `totalMoney` pot.
 3.  **Game Start & Win:** A winner is declared. The `totalMoney` is split between the winner (e.g., 75%) and the admin (e.g., 25%).
 4.  **Real-time Updates:** Use `StreamBuilder` in Flutter to listen for live changes to game state, balances, and called numbers.
+  

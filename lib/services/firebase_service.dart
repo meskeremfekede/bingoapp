@@ -37,6 +37,7 @@ class FirebaseService {
         'phoneNumber': phoneNumber,
         'balance': initialBalance,
         'joinDate': FieldValue.serverTimestamp(),
+        'role': 'player',
       });
     } catch (e) {
       debugPrint('Error creating player document: $e');
@@ -55,34 +56,26 @@ class FirebaseService {
 
   Future<void> addCashToPlayer({required String playerId, required double amount, required String reason, String type = 'manual_add'}) async {
     final playerRef = _firestore.collection('players').doc(playerId);
-    final transactionRef = playerRef.collection('transactions').doc();
     await _firestore.runTransaction((transaction) async {
       final snap = await transaction.get(playerRef);
       if (!snap.exists) return;
-      
-      transaction.update(playerRef, {'balance': FieldValue.increment(amount)});
-      transaction.set(transactionRef, {
-        'amount': amount,
-        'type': type,
-        'reason': reason,
-        'date': DateTime.now(), // FIX: Use local time for immediate UI update
+      final current = _parseSafeDouble((snap.data() as Map<String, dynamic>?)?['balance']);
+      transaction.update(playerRef, {'balance': current + amount});
+      transaction.set(playerRef.collection('transactions').doc(), {
+        'amount': amount, 'type': type, 'reason': reason, 'date': DateTime.now(),
       });
     });
   }
 
   Future<void> deductCashFromPlayer({required String playerId, required double amount, required String reason, String type = 'manual_deduct'}) async {
     final playerRef = _firestore.collection('players').doc(playerId);
-    final transactionRef = playerRef.collection('transactions').doc();
     await _firestore.runTransaction((transaction) async {
       final snap = await transaction.get(playerRef);
       if (!snap.exists) return;
-
-      transaction.update(playerRef, {'balance': FieldValue.increment(-amount)});
-      transaction.set(transactionRef, {
-        'amount': -amount,
-        'type': type,
-        'reason': reason,
-        'date': DateTime.now(), // FIX: Use local time for immediate UI update
+      final current = _parseSafeDouble((snap.data() as Map<String, dynamic>?)?['balance']);
+      transaction.update(playerRef, {'balance': current - amount});
+      transaction.set(playerRef.collection('transactions').doc(), {
+        'amount': -amount, 'type': type, 'reason': reason, 'date': DateTime.now(),
       });
     });
   }
@@ -139,28 +132,17 @@ class FirebaseService {
   }) async {
     final gameRef = _firestore.collection('games').doc(gameId);
     final playerRef = _firestore.collection('players').doc(playerId);
-    final transactionRef = playerRef.collection('transactions').doc();
-    final Random random = Random();
-    final double totalCost = cardCost * numberOfCards;
-
     try {
       return await _firestore.runTransaction((transaction) async {
         final playerSnap = await transaction.get(playerRef);
-        if (!playerSnap.exists) throw Exception('Player profile missing.');
-        
-        final double currentBalance = _parseSafeDouble(playerSnap.data()?['balance']);
-        if (currentBalance < totalCost) {
-          throw Exception('Insufficient balance. Need ${totalCost.toStringAsFixed(2)} ETB.');
-        }
+        final double currentBalance = _parseSafeDouble((playerSnap.data() as Map<String, dynamic>?)?['balance']);
+        if (currentBalance < (cardCost * numberOfCards)) throw Exception('Insufficient balance.');
 
-        final List<List<int>> generatedCards = List.generate(numberOfCards, (_) => _generateRandomCard(random));
+        final List<List<int>> generatedCards = List.generate(numberOfCards, (_) => _generateRandomCard(Random()));
 
-        transaction.update(playerRef, {'balance': FieldValue.increment(-totalCost)});
-        transaction.set(transactionRef, {
-          'amount': -totalCost,
-          'type': 'game_fee',
-          'reason': 'Game $gameId entry',
-          'date': DateTime.now(), // FIX: Use local time for immediate UI update
+        transaction.update(playerRef, {'balance': currentBalance - (cardCost * numberOfCards)});
+        transaction.set(playerRef.collection('transactions').doc(), {
+          'amount': -(cardCost * numberOfCards), 'type': 'game_fee', 'reason': 'Match entry', 'date': DateTime.now(),
         });
 
         Map<String, dynamic> cardData = {};
@@ -171,8 +153,10 @@ class FirebaseService {
         cardData['${playerId}_paymentStatus'] = 'paid';
 
         transaction.update(gameRef, cardData);
-        transaction.update(gameRef, {'totalCardsSold': FieldValue.increment(numberOfCards)});
-        transaction.update(gameRef, {'players': FieldValue.arrayUnion([playerId])});
+        transaction.update(gameRef, {
+          'totalCardsSold': FieldValue.increment(numberOfCards),
+          'players': FieldValue.arrayUnion([playerId])
+        });
 
         return generatedCards;
       }, timeout: const Duration(seconds: 25));
@@ -227,30 +211,31 @@ class FirebaseService {
   Future<bool> claimWin({required String gameId, required String playerId}) async {
     final gameRef = _firestore.collection('games').doc(gameId);
     try {
-      final gameSnap = await gameRef.get();
-      final gameData = gameSnap.data() as Map<String, dynamic>;
-      final called = List<int>.from(gameData['calledNumbers'] ?? []);
-      final flags = List<int>.from(gameData['${playerId}_selectedFlags'] ?? []);
-      final pattern = gameData['winningPattern'] as String? ?? 'Any Line';
-      
-      int count = gameData['${playerId}_cardCount'] ?? 0;
-      for (int i = 0; i < count; i++) {
-        String cardStr = gameData['${playerId}_card$i'] ?? '';
-        if (cardStr.isEmpty) continue;
-        List<int> card = cardStr.split(',').map((s) => int.parse(s.trim())).toList();
+      return await _firestore.runTransaction((transaction) async {
+        final gameSnap = await transaction.get(gameRef);
+        if (!gameSnap.exists) return false;
+        final gameData = gameSnap.data() as Map<String, dynamic>;
+        final called = (gameData['calledNumbers'] as List<dynamic>? ?? []).map((e) => (e as num).toInt()).toList();
+        final flags = List<int>.from(gameData['${playerId}_selectedFlags'] ?? []);
+        final pattern = gameData['winningPattern'] as String? ?? 'Any Line';
         
-        if (_checkWinner(card, called, pattern)) {
-          final winnerNickname = flags.length > i ? flags[i].toString() : 'Player';
-          await gameRef.update({
-            'status': 'completed',
-            'winner': playerId,
-            'winnerNickname': winnerNickname,
-            'winners': [{'playerId': playerId, 'nickname': winnerNickname}]
-          });
-          return true;
+        int count = gameData['${playerId}_cardCount'] ?? 0;
+        for (int i = 0; i < count; i++) {
+          String cardStr = gameData['${playerId}_card$i'] ?? '';
+          if (cardStr.isEmpty) continue;
+          List<int> card = cardStr.split(',').map((s) => int.parse(s.trim())).toList();
+          if (_checkWinner(card, called, pattern)) {
+            final nickname = flags.length > i ? flags[i].toString() : 'Player';
+            final winners = List<Map<String, dynamic>>.from(gameData['winners'] ?? []);
+            if (!winners.any((w) => w['playerId'] == playerId)) {
+              winners.add({'playerId': playerId, 'nickname': nickname, 'timestamp': DateTime.now().toIso8601String()});
+              transaction.update(gameRef, {'status': 'completed', 'winner': playerId, 'winners': winners});
+            }
+            return true;
+          }
         }
-      }
-      return false;
+        return false;
+      });
     } catch (e) {
       return false;
     }
@@ -264,7 +249,7 @@ class FirebaseService {
 
   Future<void> callRandomNumber(String gameId) async {
     final gameSnap = await _firestore.collection('games').doc(gameId).get();
-    final called = List<int>.from(gameSnap.data()?['calledNumbers'] ?? []);
+    final called = (gameSnap.data()?['calledNumbers'] as List<dynamic>? ?? []).map((e) => (e as num).toInt()).toList();
     if (called.length >= 75) return;
     int next;
     do { next = Random().nextInt(75) + 1; } while (called.contains(next));
@@ -275,61 +260,51 @@ class FirebaseService {
     final gameRef = _firestore.collection('games').doc(gameId);
     
     try {
+      final gameSnap = await gameRef.get();
+      if (!gameSnap.exists) throw Exception('Game not found.');
+      final gameData = gameSnap.data() as Map<String, dynamic>;
+      if (gameData['prizeDistributed'] == true) throw Exception('Already paid.');
+
+      final winners = List<dynamic>.from(gameData['winners'] ?? []);
+      final String? adminId = gameData['adminId'];
+      if (winners.isEmpty) throw Exception('No winners.');
+      if (adminId == null) throw Exception('Admin ID missing.');
+
+      final double totalPool = (gameData['totalCardsSold'] ?? 0) * _parseSafeDouble(gameData['cardCost']);
+      final double totalWinnerShare = GameConfig.calculateWinnerShare(totalPool);
+      final double adminShare = GameConfig.calculateAdminShare(totalPool);
+      final double prizePerWinner = totalWinnerShare / winners.length;
+      final now = DateTime.now();
+
       await _firestore.runTransaction((transaction) async {
-        final gameSnap = await transaction.get(gameRef);
-        if (!gameSnap.exists) throw Exception('Game not found.');
-        
-        final gameData = gameSnap.data() as Map<String, dynamic>;
-        if (gameData['prizeDistributed'] == true) {
-          throw Exception('Prizes already paid for this match.');
+        final List<DocumentSnapshot> wSnaps = [];
+        for (var w in winners) {
+          wSnaps.add(await transaction.get(_firestore.collection('players').doc(w['playerId'])));
+        }
+        final aSnap = await transaction.get(_firestore.collection('players').doc(adminId));
+
+        for (var s in wSnaps) {
+          if (s.exists) {
+            final double bal = _parseSafeDouble((s.data() as Map<String, dynamic>?)?['balance']);
+            transaction.update(s.reference, {'balance': bal + prizePerWinner});
+            transaction.set(s.reference.collection('transactions').doc(), {
+              'amount': prizePerWinner, 'type': 'game_win', 'reason': 'Bingo Win', 'date': now,
+            });
+          }
         }
 
-        final winnerId = gameData['winner'] as String?;
-        final adminId = gameData['adminId'] as String?;
-        if (winnerId == null) throw Exception('No winner recorded.');
-
-        final winnerRef = _firestore.collection('players').doc(winnerId);
-        final winnerSnap = await transaction.get(winnerRef);
-
-        DocumentSnapshot? adminSnap;
-        if (adminId != null && adminId.isNotEmpty) {
-          adminSnap = await transaction.get(_firestore.collection('players').doc(adminId));
-        }
-
-        final double totalPool = (gameData['totalCardsSold'] ?? 0) * _parseSafeDouble(gameData['cardCost']);
-        final double winnerShare = GameConfig.calculateWinnerShare(totalPool);
-        final double adminShare = GameConfig.calculateAdminShare(totalPool);
-
-        final now = DateTime.now(); // FIX: Group all transactions under exact same local time
-
-        if (winnerSnap.exists) {
-          transaction.update(winnerRef, {'balance': FieldValue.increment(winnerShare)});
-          final winTxRef = winnerRef.collection('transactions').doc();
-          transaction.set(winTxRef, {
-            'amount': winnerShare,
-            'type': 'game_win',
-            'reason': 'Bingo Win: ${gameData['gameName']}',
-            'date': now,
-          });
-        }
-
-        if (adminSnap != null && adminSnap.exists) {
-          final adminRef = adminSnap.reference;
-          transaction.update(adminRef, {'balance': FieldValue.increment(adminShare)});
-          final adminTxRef = adminRef.collection('transactions').doc();
-          transaction.set(adminTxRef, {
-            'amount': adminShare,
-            'type': 'admin_profit',
-            'reason': 'Profit: ${gameData['gameName']}',
-            'date': now,
+        if (aSnap.exists) {
+          final double bal = _parseSafeDouble((aSnap.data() as Map<String, dynamic>?)?['balance']);
+          transaction.update(aSnap.reference, {'balance': bal + adminShare});
+          transaction.set(aSnap.reference.collection('transactions').doc(), {
+            'amount': adminShare, 'type': 'admin_profit', 'reason': 'Profit', 'date': now,
           });
         }
 
         transaction.update(gameRef, {'prizeDistributed': true});
       });
     } catch (e) {
-      debugPrint('🚨 Distribution Transaction Error: $e');
-      throw Exception(e.toString().replaceFirst("Exception: ", ""));
+      throw Exception('Payout error: $e');
     }
   }
 }

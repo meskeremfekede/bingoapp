@@ -35,22 +35,25 @@ class _AdminGameControlScreenState extends State<AdminGameControlScreen> {
       await _firebaseService.callRandomNumber(widget.gameId);
       await _checkForAutoWinners();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
+      }
     }
   }
   
   Future<void> _checkForAutoWinners() async {
     try {
       final gameDoc = await FirebaseFirestore.instance.collection('games').doc(widget.gameId).get();
+      if (!gameDoc.exists) return;
+      
       final gameData = gameDoc.data() as Map<String, dynamic>? ?? {};
       final players = List<String>.from(gameData['players'] ?? []);
-      final calledNumbers = List<int>.from(gameData['calledNumbers'] ?? []);
+      final calledNumbers = (gameData['calledNumbers'] as List<dynamic>? ?? []).map((e) => (e as num).toInt()).toList();
       final winningPattern = gameData['winningPattern'] as String? ?? 'any_line';
       
       List<Map<String, dynamic>> winners = [];
       for (final playerId in players) {
-        final List<List<int>> playerCards = [];
-        final List<int> playerFlags = List<int>.from(gameData['${playerId}_selectedFlags'] ?? []);
+        final List<int> playerFlags = (gameData['${playerId}_selectedFlags'] as List<dynamic>? ?? []).map((e) => (e as num).toInt()).toList();
         final count = gameData['${playerId}_cardCount'] ?? 0;
         
         for (int i = 0; i < count; i++) {
@@ -85,14 +88,14 @@ class _AdminGameControlScreenState extends State<AdminGameControlScreen> {
 
     showDialog(
       context: context,
-      barrierDismissible: true, // Allow dismissal by tapping outside
+      barrierDismissible: true,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1C1C3A),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: const BorderSide(color: Colors.amber, width: 2)),
         title: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text('🎉 BINGO! 🎉', style: TextStyle(color: Colors.amber, fontSize: 22, fontWeight: FontWeight.bold)),
+            const Text('🎉 BINGO DETECTED! 🎉', style: TextStyle(color: Colors.amber, fontSize: 20, fontWeight: FontWeight.bold)),
             IconButton(
               icon: const Icon(Icons.close, color: Colors.white54),
               onPressed: () => Navigator.of(context).pop(),
@@ -104,11 +107,15 @@ class _AdminGameControlScreenState extends State<AdminGameControlScreen> {
           children: [
             const Icon(Icons.stars, color: Colors.amber, size: 60),
             const SizedBox(height: 16),
-            const Text('Winner Found:', style: TextStyle(color: Colors.white70, fontSize: 14)),
-            PlayerNameWidget(playerId: id, textStyle: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)), 
+            const Text('Match Winner:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+            const SizedBox(height: 8),
+            PlayerNameWidget(
+              playerId: id, 
+              textStyle: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900, letterSpacing: 1.2)
+            ), 
             const SizedBox(height: 16),
             const Text('Identity:', style: TextStyle(color: Colors.white38, fontSize: 12)),
-            Text('FLAG #$nickname', style: const TextStyle(color: Colors.greenAccent, fontSize: 28, fontWeight: FontWeight.w900)),
+            Text('FLAG #$nickname', style: const TextStyle(color: Colors.greenAccent, fontSize: 32, fontWeight: FontWeight.w900)),
           ],
         ),
         actions: [
@@ -139,7 +146,7 @@ class _AdminGameControlScreenState extends State<AdminGameControlScreen> {
       if ([grid[0][4], grid[1][3], grid[2][2], grid[3][1], grid[4][0]].every((n) => active.contains(n))) return true;
     }
     if (p == 'four corners' || p == 'four_corners') {
-      if ([grid[0][0], grid[0][4], grid[4][0], grid[4][4]].every((n) => active.contains(n))) return true;
+      if (active.contains(grid[0][0]) && active.contains(grid[0][4]) && active.contains(grid[4][0]) && active.contains(grid[4][4])) return true;
     }
     if (p == 'full house' || p == 'full_house') {
       return card.every((n) => active.contains(n));
@@ -156,33 +163,22 @@ class _AdminGameControlScreenState extends State<AdminGameControlScreen> {
     }
   }
 
-  Future<void> _manualEndGame() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('End Match?'),
-        content: const Text('Manually end this match? No prizes will be distributed.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          ElevatedButton(onPressed: () => Navigator.pop(context, true), style: ElevatedButton.styleFrom(backgroundColor: Colors.red), child: const Text('End Game')),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      try {
-        await FirebaseFirestore.instance.collection('games').doc(widget.gameId).update({'status': 'completed'});
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
-      }
-    }
-  }
-
-  Future<void> _endGameAndDistributePrizes() async {
+  Future<void> _endGameAndDistributePrizes(Map<String, dynamic> gameData) async {
     try {
+      if (gameData['adminId'] == null) {
+        final currentUid = FirebaseAuth.instance.currentUser?.uid;
+        if (currentUid != null) {
+          await FirebaseFirestore.instance.collection('games').doc(widget.gameId).update({'adminId': currentUid});
+        }
+      }
       await _firebaseService.distributePrizes(widget.gameId);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Prizes distributed!'), backgroundColor: Colors.green));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Success!'), backgroundColor: Colors.green));
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString()), backgroundColor: Colors.red));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString()), backgroundColor: Colors.red));
+      }
     }
   }
 
@@ -203,14 +199,8 @@ class _AdminGameControlScreenState extends State<AdminGameControlScreen> {
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
 
           final gameData = snapshot.data!.data()! as Map<String, dynamic>;
-          final calledNumbers = List<int>.from(gameData['calledNumbers'] ?? []);
-          final playersJoined = List<String>.from(gameData['players'] ?? []);
           final status = gameData['status'] as String? ?? 'pending';
           final winners = List<dynamic>.from(gameData['winners'] ?? []);
-
-          final cardCost = _parseSafeDouble(gameData['cardCost']);
-          final totalCardsSold = gameData['totalCardsSold'] as int? ?? 0;
-          final actualProfit = (totalCardsSold * cardCost) * (30/130);
 
           if (status == 'completed' && winners.isNotEmpty) {
             final winner = winners.first as Map<String, dynamic>;
@@ -219,17 +209,37 @@ class _AdminGameControlScreenState extends State<AdminGameControlScreen> {
             });
           }
 
+          final cardCost = _parseSafeDouble(gameData['cardCost']);
+          final totalCardsSold = gameData['totalCardsSold'] as int? ?? 0;
+          final actualProfit = (totalCardsSold * cardCost) * (30/130);
+
           return ListView(
             padding: const EdgeInsets.all(16.0),
             children: [
               Text(gameData['gameName'] ?? 'Bingo Match', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
               const SizedBox(height: 16),
-              if (status == 'ongoing')
-                 Text('Admin Profit: ${actualProfit.toStringAsFixed(2)} ETB', style: const TextStyle(fontSize: 16, color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+              // Show current game info only
+              Card(
+                color: const Color(0xFF1C1C3A),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('💰 CURRENT GAME', style: TextStyle(fontSize: 18, color: Colors.white, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 12),
+                      Text('Game Profit: ${actualProfit.toStringAsFixed(2)} ETB', style: const TextStyle(fontSize: 16, color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      Text('Cards Sold: $totalCardsSold', style: const TextStyle(fontSize: 14, color: Colors.white70)),
+                      Text('Card Price: ${cardCost.toStringAsFixed(2)} ETB', style: const TextStyle(fontSize: 14, color: Colors.white70)),
+                    ],
+                  ),
+                ),
+              ),
               const SizedBox(height: 16),
               _buildStatusButton(status, gameData),
               const Divider(height: 32, color: Colors.white24),
-              _buildPlayerList(playersJoined),
+              _buildPlayerList(List<String>.from(gameData['players'] ?? [])),
               const Divider(height: 32, color: Colors.white24),
               const Text('Bingo Caller (1-75)', style: TextStyle(fontSize: 18, color: Colors.white70)),
               const SizedBox(height: 16),
@@ -240,17 +250,13 @@ class _AdminGameControlScreenState extends State<AdminGameControlScreen> {
                 itemCount: 75,
                 itemBuilder: (context, index) {
                   final number = index + 1;
+                  final calledNumbers = (gameData['calledNumbers'] as List<dynamic>? ?? []).map((e) => (e as num).toInt()).toList();
                   final isCalled = calledNumbers.contains(number);
                   return InkWell(
                     onTap: status == 'ongoing' && !isCalled ? () => _callSpecificNumber(number) : null,
                     child: Container(
-                      decoration: BoxDecoration(
-                        color: isCalled ? Colors.purpleAccent : const Color(0xFF1C1C3A),
-                        borderRadius: BorderRadius.circular(4)
-                      ),
-                      child: Center(
-                        child: Text(number.toString(), style: TextStyle(color: isCalled ? Colors.white : Colors.white38, fontWeight: isCalled ? FontWeight.bold : FontWeight.normal))
-                      ),
+                      decoration: BoxDecoration(color: isCalled ? Colors.purpleAccent : const Color(0xFF1C1C3A), borderRadius: BorderRadius.circular(4)),
+                      child: Center(child: Text(number.toString(), style: TextStyle(color: isCalled ? Colors.white : Colors.white38))),
                     ),
                   );
                 },
@@ -266,7 +272,7 @@ class _AdminGameControlScreenState extends State<AdminGameControlScreen> {
     if (status == 'completed') {
       final bool prizesPaid = gameData['prizeDistributed'] == true;
       return ElevatedButton.icon(
-        onPressed: prizesPaid ? null : () => _endGameAndDistributePrizes(),
+        onPressed: prizesPaid ? null : () => _endGameAndDistributePrizes(gameData),
         icon: const Icon(Icons.payments),
         label: Text(prizesPaid ? 'Prizes Distributed' : 'Pay Winners & Admin'),
         style: ElevatedButton.styleFrom(backgroundColor: prizesPaid ? Colors.grey : Colors.green, padding: const EdgeInsets.symmetric(vertical: 16)),
@@ -280,13 +286,27 @@ class _AdminGameControlScreenState extends State<AdminGameControlScreen> {
         style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, padding: const EdgeInsets.symmetric(vertical: 16)),
       );
     }
-    return Row(
-      children: [
-        Expanded(child: ElevatedButton(onPressed: () => _callRandomNumber(), child: const Text('Call Random'), style: ElevatedButton.styleFrom(backgroundColor: Colors.orange))),
-        const SizedBox(width: 8),
-        Expanded(child: ElevatedButton(onPressed: () => _manualEndGame(), child: const Text('End Match'), style: ElevatedButton.styleFrom(backgroundColor: Colors.red))),
-      ],
-    );
+    if (status == 'ongoing') {
+      // Show Random Calling and End Match buttons during ongoing game
+      return Column(
+        children: [
+          ElevatedButton.icon(
+            onPressed: () => _callRandomNumber(),
+            icon: const Icon(Icons.casino),
+            label: const Text('Call Random'),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, padding: const EdgeInsets.symmetric(vertical: 16)),
+          ),
+          const SizedBox(height: 8),
+          ElevatedButton.icon(
+            onPressed: () => _endGameAndDistributePrizes(gameData),
+            icon: const Icon(Icons.stop_circle),
+            label: const Text('End Match'),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, padding: const EdgeInsets.symmetric(vertical: 16)),
+          ),
+        ],
+      );
+    }
+    return const SizedBox.shrink();
   }
 
   Widget _buildPlayerList(List<String> players) {
@@ -309,7 +329,7 @@ class _AdminGameControlScreenState extends State<AdminGameControlScreen> {
                   color: const Color(0xFF1C1C3A),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                    child: Center(child: PlayerNameWidget(playerId: id, textStyle: const TextStyle(color: Colors.white, fontSize: 12))),
+                    child: Center(child: PlayerNameWidget(playerId: id, textStyle: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold))),
                   ),
                 );
               },

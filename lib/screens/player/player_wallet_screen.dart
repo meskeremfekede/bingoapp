@@ -29,21 +29,18 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return const Stream.empty();
 
-    Query query = FirebaseFirestore.instance
-        .collection('players').doc(user.uid).collection('transactions')
-        .orderBy('date', descending: true);
+    CollectionReference txRef = FirebaseFirestore.instance
+        .collection('players').doc(user.uid).collection('transactions');
 
-    switch (_selectedFilter) {
-      case TransactionFilter.WINNINGS:
-        query = query.where('type', isEqualTo: 'game_win');
-        break;
-      case TransactionFilter.FEES:
-        query = query.where('type', isEqualTo: 'game_fee'); 
-        break;
-      case TransactionFilter.ALL:
-      default:
-        break;
+    Query query;
+    if (_selectedFilter == TransactionFilter.WINNINGS) {
+      query = txRef.where('type', isEqualTo: 'game_win').orderBy('date', descending: true);
+    } else if (_selectedFilter == TransactionFilter.FEES) {
+      query = txRef.where('type', isEqualTo: 'game_fee').orderBy('date', descending: true);
+    } else {
+      query = txRef.orderBy('date', descending: true);
     }
+    
     return query.snapshots();
   }
 
@@ -62,7 +59,9 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
           const Text('Transaction History', 
             style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
-          Expanded(child: _buildTransactionList()),
+          Expanded(
+            child: _buildTransactionList(),
+          ),
         ],
       ),
     );
@@ -72,11 +71,12 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
     return StreamBuilder<DocumentSnapshot>(
       stream: _balanceStream(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) {
+        // PERMANENCE: Show spinner only on absolute first load with no data
+        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
         
-        final balance = (snapshot.data!.data() as Map<String, dynamic>?)?['balance'] ?? 0.0;
+        final balance = (snapshot.data?.data() as Map<String, dynamic>?)?['balance'] ?? 0.0;
 
         return Card(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -101,17 +101,17 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
                   width: double.infinity,
                   child: ElevatedButton.icon(
                     onPressed: () {
-                      setState(() {}); // Trigger rebuild/refresh
+                      setState(() {}); 
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text('Refreshing balance...'),
+                          content: Text('Refreshing Wallet...'),
                           backgroundColor: Colors.blue,
-                          duration: Duration(seconds: 2),
+                          duration: Duration(seconds: 1),
                         ),
                       );
                     },
                     icon: const Icon(Icons.refresh, color: Colors.white),
-                    label: const Text('Refresh Balance'),
+                    label: const Text('Refresh Wallet'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blueAccent,
                       foregroundColor: Colors.white,
@@ -133,21 +133,21 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          ChoiceChip(
+          FilterChip(
             label: const Text('All'),
             selected: _selectedFilter == TransactionFilter.ALL,
             onSelected: (selected) {
               if (selected) setState(() => _selectedFilter = TransactionFilter.ALL);
             },
           ),
-          ChoiceChip(
+          FilterChip(
             label: const Text('Winnings'),
             selected: _selectedFilter == TransactionFilter.WINNINGS,
             onSelected: (selected) {
               if (selected) setState(() => _selectedFilter = TransactionFilter.WINNINGS);
             },
           ),
-          ChoiceChip(
+          FilterChip(
             label: const Text('Fees'),
             selected: _selectedFilter == TransactionFilter.FEES,
             onSelected: (selected) {
@@ -161,40 +161,67 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
 
   Widget _buildTransactionList() {
     return StreamBuilder<QuerySnapshot>(
+      key: ValueKey(_selectedFilter),
       stream: _transactionsStream(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+        // PERMANENCE: If we have data from a previous state, keep it visible while loading
+        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator(color: Colors.purpleAccent));
         }
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return const Center(child: Text('No transactions for this filter.', 
-            style: TextStyle(color: Colors.white70)));
+        
+        final docs = snapshot.data?.docs ?? [];
+        debugPrint('🔍 PLAYER WALLET: Processing ${docs.length} transactions');
+        for (var doc in docs) {
+          final data = doc.data() as Map<String, dynamic>;
+          debugPrint('📋 PLAYER WALLET: Transaction type: ${data['type']}, amount: ${data['amount']}, reason: ${data['reason']}');
         }
-
-        final transactions = snapshot.data!.docs;
+        
+        if (docs.isEmpty && snapshot.connectionState != ConnectionState.waiting) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.receipt_long, color: Colors.white10, size: 64),
+                const SizedBox(height: 16),
+                const Text('No transactions found.', style: TextStyle(color: Colors.white24)),
+              ],
+            ),
+          );
+        }
 
         return ListView.builder(
           padding: const EdgeInsets.symmetric(horizontal: 16.0),
-          itemCount: transactions.length,
+          itemCount: docs.length,
           itemBuilder: (context, index) {
-            final doc = transactions[index];
-            final data = doc.data() as Map<String, dynamic>;
-            final amount = (data['amount'] as num).toDouble();
-            final reason = data['reason'] as String? ?? 'N/A';
+            final data = docs[index].data() as Map<String, dynamic>;
+            final amount = (data['amount'] as num?)?.toDouble() ?? 0.0;
+            final reason = data['reason'] as String? ?? 'Match Transaction';
             final date = (data['date'] as Timestamp?)?.toDate();
-            final formattedDate = date != null ? DateFormat.yMd().add_jm().format(date) : 'N/A';
+            final formattedDate = date != null ? DateFormat.yMd().add_jm().format(date) : 'Recently';
 
             return Card(
               color: const Color(0xFF1C1C3A),
               margin: const EdgeInsets.only(bottom: 8.0),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               child: ListTile(
-                leading: Icon(amount > 0 ? Icons.arrow_upward : Icons.arrow_downward, 
-                  color: amount > 0 ? Colors.greenAccent : Colors.redAccent),
-                title: Text(reason, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                subtitle: Text(formattedDate, style: const TextStyle(color: Colors.white70)),
-                trailing: Text('${amount.toStringAsFixed(2)} ETB', 
-                  style: TextStyle(color: amount > 0 ? Colors.greenAccent : Colors.redAccent, 
-                  fontWeight: FontWeight.bold, fontSize: 16)),
+                leading: CircleAvatar(
+                  backgroundColor: amount > 0 ? Colors.green.withOpacity(0.1) : Colors.red.withOpacity(0.1),
+                  child: Icon(
+                    amount > 0 ? Icons.add : Icons.remove, 
+                    color: amount > 0 ? Colors.greenAccent : Colors.redAccent, 
+                    size: 18
+                  ),
+                ),
+                title: Text(reason, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                subtitle: Text(formattedDate, style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                trailing: Text(
+                  '${amount.toStringAsFixed(2)} ETB', 
+                  style: TextStyle(
+                    color: amount > 0 ? Colors.greenAccent : Colors.white70, 
+                    fontWeight: FontWeight.bold, 
+                    fontSize: 15
+                  )
+                ),
               ),
             );
           },
