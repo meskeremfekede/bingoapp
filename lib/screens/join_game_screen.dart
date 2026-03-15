@@ -3,6 +3,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:mygame/services/firebase_service.dart';
 import 'package:mygame/screens/player/player_card_selection_screen.dart';
+import 'package:mygame/screens/player/player_game_lobby_screen.dart';
+import 'package:mygame/screens/player/player_game_board_screen.dart';
 
 class JoinGameScreen extends StatefulWidget {
   const JoinGameScreen({super.key});
@@ -36,19 +38,44 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
           throw Exception('Incorrect game code.');
         }
 
-        final gameId = gameQuery.docs.first.id;
+        final gameDoc = gameQuery.docs.first;
+        final gameId = gameDoc.id;
+        final gameData = gameDoc.data();
+        print('🎮 JOIN SCREEN: Found game ID: $gameId for player ${user.uid}');
         
         // 1. Join Game Logic
         await _firebaseService.joinGameLobby(gameId: gameId, playerId: user.uid);
+        print('🎮 JOIN SCREEN: Successfully joined game lobby');
 
         if (mounted) {
-          // 2. Journey Step: Move straight to Card Selection
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (context) => CardSelectionScreen(gameId: gameId)),
-          );
+          // 2. Journey Step: Check if player already paid and selected flags
+          final hasPaid = gameData.containsKey('${user.uid}_paymentStatus') && gameData['${user.uid}_paymentStatus'] == 'paid';
+          final hasFlags = gameData.containsKey('${user.uid}_selectedFlags') && (gameData['${user.uid}_selectedFlags'] as List).isNotEmpty;
+          final gameStatus = gameData['status'] as String? ?? 'pending';
+
+          if (hasPaid && hasFlags) {
+            // Player already paid and selected flags, move to waiting room or game board
+            if (gameStatus == 'ongoing') {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (context) => PlayerGameBoardScreen(gameId: gameId, playerId: user.uid)),
+              );
+            } else {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (context) => PlayerGameLobbyScreen(gameId: gameId)),
+              );
+            }
+          } else {
+            // Player hasn't finished the process, go to Card Selection
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (context) => CardSelectionScreen(gameId: gameId)),
+            );
+          }
         }
       } catch (e) {
+        print('🎮 JOIN SCREEN ERROR: Failed to join - $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(e.toString().replaceFirst("Exception: ", ""))),
@@ -94,7 +121,7 @@ class _JoinGameScreenState extends State<JoinGameScreen> {
                 child: ElevatedButton(
                   onPressed: _isLoading ? null : _joinGame,
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.purpleAccent),
-                  child: _isLoading ? const CircularProgressIndicator() : const Text('CONTINUE TO PAYMENT'),
+                  child: _isLoading ? const CircularProgressIndicator() : const Text('CONTINUE'),
                 ),
               ),
             ],

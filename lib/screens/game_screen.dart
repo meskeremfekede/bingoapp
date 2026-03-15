@@ -24,37 +24,81 @@ class _GameScreenState extends State<GameScreen> {
     Navigator.push(context, MaterialPageRoute(builder: (context) => AdminGameControlScreen(gameId: gameId)));
   }
 
+  Future<void> _deleteGame(String gameId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Game?'),
+        content: const Text('Are you sure you want to permanently remove this game record? This cannot be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        await FirebaseFirestore.instance.collection('games').doc(gameId).delete();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Game deleted successfully.'), backgroundColor: Colors.green),
+        );
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to delete: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0A1A), // Dark Theme
+      backgroundColor: const Color(0xFF0A0A1A),
       body: StreamBuilder<QuerySnapshot>(
         stream: _getGamesStream(),
         builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return Center(child: Text('Error: ${snapshot.error}', style: const TextStyle(color: Colors.red)));
-          }
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+          if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}', style: const TextStyle(color: Colors.red)));
+          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
           if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
             return const Center(child: Text('No games found. Create one to get started!', style: TextStyle(color: Colors.white70)));
           }
 
           final allGames = snapshot.data!.docs;
-          final ongoingGames = allGames.where((doc) => (doc.data() as Map<String, dynamic>)['status'] == 'ongoing').toList();
-          final pendingGames = allGames.where((doc) => (doc.data() as Map<String, dynamic>)['status'] == 'pending').toList();
-          final completedGames = allGames.where((doc) => (doc.data() as Map<String, dynamic>)['status'] == 'completed').toList();
+          
+          // FLEXIBLE FILTERING: Handles both lowercase and uppercase statuses
+          final ongoingGames = allGames.where((doc) {
+            final status = (doc.data() as Map<String, dynamic>)['status']?.toString().toLowerCase() ?? '';
+            return status == 'ongoing';
+          }).toList();
+
+          final pendingGames = allGames.where((doc) {
+            final status = (doc.data() as Map<String, dynamic>)['status']?.toString().toLowerCase() ?? '';
+            return status == 'pending';
+          }).toList();
+
+          final completedGames = allGames.where((doc) {
+            final status = (doc.data() as Map<String, dynamic>)['status']?.toString().toLowerCase() ?? '';
+            return status == 'completed';
+          }).toList();
+
+          // Catch-all for games with no status or unknown status
+          final otherGames = allGames.where((doc) {
+            final status = (doc.data() as Map<String, dynamic>)['status']?.toString().toLowerCase() ?? '';
+            return status != 'ongoing' && status != 'pending' && status != 'completed';
+          }).toList();
 
           return ListView(
             padding: const EdgeInsets.all(16.0),
             children: [
-              if (ongoingGames.isNotEmpty)
-                _buildGameSection('Ongoing Games', ongoingGames),
-              if (pendingGames.isNotEmpty)
-                _buildGameSection('Available to Join', pendingGames),
-              if (completedGames.isNotEmpty)
-                _buildGameSection('Completed Games', completedGames),
+              if (ongoingGames.isNotEmpty) _buildGameSection('Ongoing Matches', ongoingGames),
+              if (pendingGames.isNotEmpty) _buildGameSection('Pending Lobby', pendingGames),
+              if (completedGames.isNotEmpty) _buildGameSection('Match History', completedGames),
+              if (otherGames.isNotEmpty) _buildGameSection('Unknown/Legacy Status', otherGames),
             ],
           );
         },
@@ -62,8 +106,8 @@ class _GameScreenState extends State<GameScreen> {
       floatingActionButton: FloatingActionButton(
         onPressed: _navigateToCreateGame,
         tooltip: 'Create Game',
+        backgroundColor: Colors.yellow.shade700,
         child: const Icon(Icons.add, color: Colors.black87),
-        backgroundColor: Colors.yellow.shade700, // Yellow Accent
       ),
     );
   }
@@ -74,7 +118,7 @@ class _GameScreenState extends State<GameScreen> {
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 8.0),
-          child: Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+          child: Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
         ),
         ListView.builder(
           shrinkWrap: true,
@@ -82,10 +126,14 @@ class _GameScreenState extends State<GameScreen> {
           itemCount: games.length,
           itemBuilder: (context, index) {
             final game = games[index];
-            return GameCard(game: game, onTap: () => _navigateToGameControl(game.id));
+            return GameCard(
+              game: game, 
+              onTap: () => _navigateToGameControl(game.id),
+              onDelete: () => _deleteGame(game.id),
+            );
           },
         ),
-        const Divider(height: 32, color: Colors.white24),
+        const Divider(height: 32, color: Colors.white10),
       ],
     );
   }
@@ -94,85 +142,46 @@ class _GameScreenState extends State<GameScreen> {
 class GameCard extends StatelessWidget {
   final DocumentSnapshot game;
   final VoidCallback onTap;
-  const GameCard({super.key, required this.game, required this.onTap});
+  final VoidCallback onDelete;
+
+  const GameCard({super.key, required this.game, required this.onTap, required this.onDelete});
 
   @override
   Widget build(BuildContext context) {
     final data = game.data() as Map<String, dynamic>? ?? {};
-
     final String gameName = data['gameName'] as String? ?? 'Untitled Game';
-    final String winningPattern = data['winningPattern'] as String? ?? 'N/A'; // Fixed spelling
-    final String status = data['status'] as String? ?? 'UNKNOWN';
+    final String status = data['status']?.toString().toLowerCase() ?? 'unknown';
     final int playerCount = (data['players'] as List<dynamic>? ?? []).length;
-
-    String? firstWinnerId;
-    final List<dynamic> winners = data['winners'] as List<dynamic>? ?? [];
-    if (winners.isNotEmpty) {
-      final firstWinnerMap = winners.first as Map<String, dynamic>?;
-      if (firstWinnerMap != null) {
-        firstWinnerId = firstWinnerMap['playerId'] as String?;
-      }
-    }
 
     Color statusColor;
     switch (status) {
-      case 'completed':
-        statusColor = Colors.greenAccent;
-        break;
-      case 'ongoing':
-        statusColor = Colors.yellow.shade700;
-        break;
-      default:
-        statusColor = Colors.grey;
+      case 'completed': statusColor = Colors.greenAccent; break;
+      case 'ongoing': statusColor = Colors.yellow.shade700; break;
+      case 'pending': statusColor = Colors.blueAccent; break;
+      default: statusColor = Colors.white24;
     }
 
     return Card(
-      color: const Color(0xFF1C1C3A), // Dark Card Color
+      color: const Color(0xFF1C1C3A),
       margin: const EdgeInsets.only(bottom: 12.0),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      elevation: 0.5,
-      child: InkWell(
+      child: ListTile(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(gameName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-                  Text(status.toUpperCase(), style: TextStyle(color: statusColor, fontWeight: FontWeight.bold)),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Icon(Icons.people, size: 16, color: Colors.white70),
-                  const SizedBox(width: 4),
-                  Text('$playerCount Players', style: const TextStyle(color: Colors.white70)),
-                  const SizedBox(width: 16),
-                  const Icon(Icons.emoji_events, size: 16, color: Colors.white70),
-                  const SizedBox(width: 4),
-                  Text(winningPattern, style: const TextStyle(color: Colors.white70)),
-                ],
-              ),
-              if (status == 'completed')
-                Padding(
-                  padding: const EdgeInsets.only(top: 8.0),
-                  child: Row(
-                    children: [
-                      const Text('Winner: ', style: TextStyle(color: Colors.white70)),
-                      if (firstWinnerId != null)
-                        PlayerNameWidget(playerId: firstWinnerId)
-                      else
-                        const Text('N/A', style: TextStyle(color: Colors.white70)),
-                    ],
-                  ),
-                ),
-            ],
-          ),
+        contentPadding: const EdgeInsets.all(16.0),
+        title: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(child: Text(gameName, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
+            Text(status.toUpperCase(), style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 8.0),
+          child: Text('$playerCount Players • ID: ${game.id.substring(0,5)}', style: const TextStyle(color: Colors.white38, fontSize: 12)),
+        ),
+        trailing: IconButton(
+          icon: const Icon(Icons.delete_outline, color: Colors.white10),
+          onPressed: onDelete,
         ),
       ),
     );

@@ -3,6 +3,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:mygame/services/firebase_service.dart';
 import 'package:mygame/screens/player/player_flag_selection_screen.dart';
+import 'package:mygame/screens/player/player_game_lobby_screen.dart';
+import 'package:mygame/screens/player/player_game_board_screen.dart';
 
 class CardSelectionScreen extends StatefulWidget {
   final String gameId;
@@ -20,7 +22,6 @@ class _CardSelectionScreenState extends State<CardSelectionScreen> {
   Stream<DocumentSnapshot> _getGameStream() => 
       FirebaseFirestore.instance.collection('games').doc(widget.gameId).snapshots();
 
-  // SAFE PARSING: Handles integer or double from database
   double _parseSafeDouble(dynamic value) {
     if (value == null) return 0.0;
     if (value is num) return value.toDouble();
@@ -66,6 +67,8 @@ class _CardSelectionScreenState extends State<CardSelectionScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+
     return StreamBuilder<DocumentSnapshot>(
       stream: _getGameStream(),
       builder: (context, snapshot) {
@@ -74,7 +77,42 @@ class _CardSelectionScreenState extends State<CardSelectionScreen> {
         final data = snapshot.data!.data() as Map<String, dynamic>?;
         if (data == null) return const Scaffold(body: Center(child: Text("ERROR: Game data corrupted.")));
 
-        // CRITICAL FIX: Safe parse the cardCost
+        // SAFETY CHECK: If player already paid, skip this screen
+        if (user != null && data.containsKey('${user.uid}_paymentStatus') && data['${user.uid}_paymentStatus'] == 'paid') {
+          final hasFlags = data.containsKey('${user.uid}_selectedFlags') && (data['${user.uid}_selectedFlags'] as List).isNotEmpty;
+          final gameStatus = data['status'] as String? ?? 'pending';
+
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (hasFlags) {
+              if (gameStatus == 'ongoing') {
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (context) => PlayerGameBoardScreen(gameId: widget.gameId, playerId: user.uid)),
+                );
+              } else {
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (context) => PlayerGameLobbyScreen(gameId: widget.gameId)),
+                );
+              }
+            } else {
+              // Paid but no flags? Read cards from DB and go to flag selection
+              final List<List<int>> cardsData = [];
+              for (int i = 0; i < (data['${user.uid}_cardCount'] ?? 0); i++) {
+                final String val = data['${user.uid}_card$i'] ?? '';
+                if (val.isNotEmpty) {
+                  cardsData.add(val.split(',').map((s) => int.tryParse(s.trim()) ?? 0).toList());
+                }
+              }
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (context) => PlayerFlagSelectionScreen(gameId: widget.gameId, playerId: user.uid, cards: cardsData)),
+              );
+            }
+          });
+          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        }
+
         final cardCost = _parseSafeDouble(data['cardCost']);
         final maxCards = (data['maxCards'] as int? ?? 1);
 

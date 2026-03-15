@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:mygame/services/firebase_service.dart';
 import 'package:mygame/screens/player/player_game_lobby_screen.dart';
-import 'dart:developer' as developer;
 
 class PlayerFlagSelectionScreen extends StatefulWidget {
   final String gameId;
@@ -25,14 +24,17 @@ class _PlayerFlagSelectionScreenState extends State<PlayerFlagSelectionScreen> {
   final Set<int> _selectedFlags = {};
   bool _isConfirming = false;
 
-  void _onNumberTapped(int number) {
-    if (number == 0) return;
+  void _onFlagSelected(int number) {
     setState(() {
       if (_selectedFlags.contains(number)) {
         _selectedFlags.remove(number);
       } else {
         if (_selectedFlags.length < widget.cards.length) {
           _selectedFlags.add(number);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('You can only select ${widget.cards.length} flag(s).')),
+          );
         }
       }
     });
@@ -41,7 +43,7 @@ class _PlayerFlagSelectionScreenState extends State<PlayerFlagSelectionScreen> {
   Future<void> _confirmFlags() async {
     if (_selectedFlags.length != widget.cards.length) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Select ${widget.cards.length} flag(s) to continue.')),
+        SnackBar(content: Text('Please select exactly ${widget.cards.length} flag(s).')),
       );
       return;
     }
@@ -56,19 +58,14 @@ class _PlayerFlagSelectionScreenState extends State<PlayerFlagSelectionScreen> {
       );
 
       if (mounted) {
-        // JOURNEY STEP: Move to Waiting Room (Lobby) after flags are set
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(
-            builder: (context) => PlayerGameLobbyScreen(gameId: widget.gameId),
-          ),
+          MaterialPageRoute(builder: (context) => PlayerGameLobbyScreen(gameId: widget.gameId)),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Error: ${e.toString()}")),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
       }
     } finally {
       if (mounted) setState(() { _isConfirming = false; });
@@ -79,48 +76,51 @@ class _PlayerFlagSelectionScreenState extends State<PlayerFlagSelectionScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A1A),
-      appBar: AppBar(title: const Text('CHOOSE YOUR IDENTITY'), backgroundColor: Colors.transparent),
+      appBar: AppBar(
+        title: const Text('CHOOSE YOUR IDENTITY', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+      ),
       body: Column(
         children: [
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: Text(
-              'Select ${_selectedFlags.length}/${widget.cards.length} numbers as your game identity.',
-              style: const TextStyle(color: Colors.amber, fontSize: 18, fontWeight: FontWeight.bold),
+              'Select ${_selectedFlags.length}/${widget.cards.length} identities from 1 to 300.',
+              style: const TextStyle(color: Colors.amber, fontSize: 16),
             ),
           ),
           Expanded(
-            child: ListView.builder(
-              itemCount: widget.cards.length,
+            child: GridView.builder(
+              padding: const EdgeInsets.all(16),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 6, // 6 items per row for 300 items
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
+              ),
+              itemCount: 300,
               itemBuilder: (context, index) {
-                return Card(
-                  color: const Color(0xFF1C1C3A),
-                  margin: const EdgeInsets.all(12),
-                  child: GridView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 5),
-                    itemCount: 25,
-                    itemBuilder: (context, gridIndex) {
-                      final number = widget.cards[index][gridIndex];
-                      final isSelected = _selectedFlags.contains(number);
-                      return GestureDetector(
-                        onTap: () => _onNumberTapped(number),
-                        child: Container(
-                          margin: const EdgeInsets.all(2),
-                          decoration: BoxDecoration(
-                            color: isSelected ? Colors.purpleAccent : Colors.transparent,
-                            border: Border.all(color: Colors.white10),
-                          ),
-                          child: Center(
-                            child: Text(
-                              number == 0 ? 'FREE' : number.toString(),
-                              style: TextStyle(color: isSelected ? Colors.white : Colors.white70, fontWeight: FontWeight.bold),
-                            ),
-                          ),
+                final number = index + 1;
+                final isSelected = _selectedFlags.contains(number);
+                return GestureDetector(
+                  onTap: () => _onFlagSelected(number),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    decoration: BoxDecoration(
+                      color: isSelected ? Colors.purpleAccent : const Color(0xFF1C1C3A),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: isSelected ? Colors.white : Colors.white10),
+                    ),
+                    child: Center(
+                      child: Text(
+                        '$number',
+                        style: TextStyle(
+                          color: isSelected ? Colors.white : Colors.white38,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
                         ),
-                      );
-                    },
+                      ),
+                    ),
                   ),
                 );
               },
@@ -133,8 +133,8 @@ class _PlayerFlagSelectionScreenState extends State<PlayerFlagSelectionScreen> {
               height: 56,
               child: ElevatedButton(
                 onPressed: _isConfirming ? null : _confirmFlags,
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-                child: _isConfirming ? const CircularProgressIndicator() : const Text('CONFIRM & JOIN WAITING ROOM'),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                child: _isConfirming ? const CircularProgressIndicator(color: Colors.white) : const Text('JOIN WAITING ROOM', style: TextStyle(fontWeight: FontWeight.bold)),
               ),
             ),
           ),

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:mygame/models/transaction.dart' as my_transaction; // Alias added
+import 'package:intl/intl.dart';
 
 class WalletScreen extends StatefulWidget {
   const WalletScreen({super.key});
@@ -35,15 +35,18 @@ class _WalletScreenState extends State<WalletScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A1A),
+      appBar: AppBar(title: const Text('ADMIN WALLET'), backgroundColor: Colors.transparent),
       body: ListView(
         padding: const EdgeInsets.all(16.0),
         children: [
           _buildBalanceCard(),
           const SizedBox(height: 24),
-          _buildProfitSummary(),
+          const Text('PROFIT ANALYTICS', style: TextStyle(color: Colors.amber, fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+          const SizedBox(height: 12),
+          _buildDetailedProfitSummary(),
           const SizedBox(height: 24),
-          const Text('Transaction History', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 16),
+          const Text('RECENT ACTIVITY', style: TextStyle(color: Colors.white38, fontSize: 14, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 12),
           _buildTransactionList(),
         ],
       ),
@@ -54,74 +57,17 @@ class _WalletScreenState extends State<WalletScreen> {
     return StreamBuilder<DocumentSnapshot>(
       stream: _balanceStream(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (!snapshot.hasData || snapshot.data?.data() == null) {
-          return const Text('No balance data.', style: TextStyle(color: Colors.white70));
-        }
-        final balance = (snapshot.data!.data() as Map<String, dynamic>?)?['balance'] ?? 0.0;
-
+        final balance = (snapshot.data?.data() as Map<String, dynamic>?)?['balance'] ?? 0.0;
         return Card(
+          color: const Color(0xFF1C1C3A),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          color: const Color(0xFF1C1C3A).withOpacity(0.8),
           child: Padding(
             padding: const EdgeInsets.all(24.0),
-            child: Row(children: [
-              const Icon(Icons.account_balance_wallet, color: Colors.amber, size: 40),
-              const SizedBox(width: 16),
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('Current Balance', style: TextStyle(color: Colors.white70, fontSize: 16)),
-                Text('${balance.toStringAsFixed(2)} ETB', style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
-              ]),
-            ]),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildProfitSummary() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: _transactionsStream(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) return const SizedBox.shrink();
-
-        final transactions = snapshot.data!.docs
-            .map((doc) => my_transaction.Transaction.fromFirestore(doc)) // Alias used here
-            .toList();
-        final adminTransactions = transactions.where((t) => t.reason != null && t.reason!.startsWith('Admin profit')).toList();
-
-        final now = DateTime.now();
-        final today = DateTime(now.year, now.month, now.day);
-        final startOfWeek = today.subtract(Duration(days: today.weekday - 1));
-        final startOfMonth = DateTime(now.year, now.month, 1);
-
-        final dailyProfit = adminTransactions
-            .where((t) => t.date.isAfter(today))
-            .fold(0.0, (sum, t) => sum + t.amount);
-
-        final weeklyProfit = adminTransactions
-            .where((t) => t.date.isAfter(startOfWeek))
-            .fold(0.0, (sum, t) => sum + t.amount);
-
-        final monthlyProfit = adminTransactions
-            .where((t) => t.date.isAfter(startOfMonth))
-            .fold(0.0, (sum, t) => sum + t.amount);
-
-        return Card(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          color: const Color(0xFF1C1C3A).withOpacity(0.8),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Profit Summary', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 16),
-                _buildProfitRow('Today', dailyProfit),
-                _buildProfitRow('This Week', weeklyProfit),
-                _buildProfitRow('This Month', monthlyProfit),
+                const Text('Total Account Balance', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                Text('${balance.toStringAsFixed(2)} ETB', style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold)),
               ],
             ),
           ),
@@ -130,14 +76,101 @@ class _WalletScreenState extends State<WalletScreen> {
     );
   }
 
-  Widget _buildProfitRow(String title, double amount) {
+  Widget _buildDetailedProfitSummary() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: _transactionsStream(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const SizedBox.shrink();
+
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+        
+        double dailyTotal = 0;
+        Map<String, double> weekDays = {};
+        Map<int, double> monthWeeks = {1: 0, 2: 0, 3: 0, 4: 0};
+
+        for (var doc in snapshot.data!.docs) {
+          final data = doc.data() as Map<String, dynamic>;
+          if (data['type'] != 'admin_profit') continue;
+          
+          final amount = (data['amount'] as num?)?.toDouble() ?? 0.0;
+          final date = (data['date'] as Timestamp?)?.toDate();
+          if (date == null) continue;
+
+          // 1. Calculate Today
+          if (date.isAfter(today)) dailyTotal += amount;
+
+          // 2. Calculate Last 7 Days Breakdown
+          if (date.isAfter(now.subtract(const Duration(days: 7)))) {
+            String dayName = DateFormat('EEEE').format(date);
+            weekDays[dayName] = (weekDays[dayName] ?? 0) + amount;
+          }
+
+          // 3. Calculate Monthly Weeks Breakdown
+          if (date.isAfter(DateTime(now.year, now.month, 1))) {
+            int weekNum = ((date.day - 1) ~/ 7) + 1;
+            if (weekNum > 4) weekNum = 4;
+            monthWeeks[weekNum] = (monthWeeks[weekNum] ?? 0) + amount;
+          }
+        }
+
+        double weeklyTotal = weekDays.values.fold(0, (a, b) => a + b);
+        double monthlyTotal = monthWeeks.values.fold(0, (a, b) => a + b);
+
+        return Column(
+          children: [
+            // Today Card
+            _buildStatRow('Today\'s Earnings', dailyTotal, isExpandable: false),
+            
+            // Weekly Expansion
+            _buildExpandableStat('Weekly Profit', weeklyTotal, weekDays.entries.map((e) => _buildSubRow(e.key, e.value)).toList()),
+            
+            // Monthly Expansion
+            _buildExpandableStat('Monthly Profit', monthlyTotal, monthWeeks.entries.map((e) => _buildSubRow('Week ${e.key}', e.value)).toList()),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildStatRow(String title, double amount, {required bool isExpandable}) {
+    return Card(
+      color: const Color(0xFF1C1C3A),
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ListTile(
+        title: Text(title, style: const TextStyle(color: Colors.white70, fontSize: 14)),
+        trailing: Text('+${amount.toStringAsFixed(2)} ETB', style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+      ),
+    );
+  }
+
+  Widget _buildExpandableStat(String title, double total, List<Widget> children) {
+    return Card(
+      color: const Color(0xFF1C1C3A),
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ExpansionTile(
+        title: Text(title, style: const TextStyle(color: Colors.white70, fontSize: 14)),
+        trailing: Text('+${total.toStringAsFixed(2)} ETB', style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+        iconColor: Colors.white38,
+        collapsedIconColor: Colors.white38,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            child: Column(children: children),
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSubRow(String label, double amount) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(title, style: const TextStyle(color: Colors.white70, fontSize: 16)),
-          Text('${amount.toStringAsFixed(2)} ETB', style: const TextStyle(color: Colors.greenAccent, fontSize: 16, fontWeight: FontWeight.bold)),
+          Text(label, style: const TextStyle(color: Colors.white38, fontSize: 12)),
+          Text('${amount.toStringAsFixed(2)} ETB', style: const TextStyle(color: Colors.white70, fontSize: 12)),
         ],
       ),
     );
@@ -147,66 +180,27 @@ class _WalletScreenState extends State<WalletScreen> {
     return StreamBuilder<QuerySnapshot>(
       stream: _transactionsStream(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return const Center(child: Text('No transactions yet.', style: TextStyle(color: Colors.white70)));
-        }
-
-        final transactions = snapshot.data!.docs
-            .map((doc) => my_transaction.Transaction.fromFirestore(doc)) // Alias used here
-            .toList();
-
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) return const Center(child: Text('No activity found.', style: TextStyle(color: Colors.white10)));
         return ListView.builder(
-          physics: const NeverScrollableScrollPhysics(),
           shrinkWrap: true,
-          itemCount: transactions.length,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: snapshot.data!.docs.length,
           itemBuilder: (context, index) {
-            final transaction = transactions[index];
-            final historicalBalance = (snapshot.data!.docs[index].data() as Map<String, dynamic>?)?['balance_after_transaction'] ?? 0.0;
-
-            return _buildTransactionItem(transaction, index: index, isLast: index == transactions.length - 1, historicalBalance: historicalBalance);
+            final data = snapshot.data!.docs[index].data() as Map<String, dynamic>;
+            final amount = (data['amount'] as num?)?.toDouble() ?? 0.0;
+            final date = (data['date'] as Timestamp?)?.toDate() ?? DateTime.now();
+            return Card(
+              color: const Color(0xFF1C1C3A),
+              margin: const EdgeInsets.only(bottom: 4),
+              child: ListTile(
+                title: Text(data['reason'] ?? 'Transaction', style: const TextStyle(color: Colors.white, fontSize: 14)),
+                subtitle: Text(DateFormat('dd MMM, HH:mm').format(date), style: const TextStyle(color: Colors.white24, fontSize: 11)),
+                trailing: Text('${amount > 0 ? "+" : ""}${amount.toStringAsFixed(2)}', style: TextStyle(color: amount > 0 ? Colors.greenAccent : Colors.redAccent, fontWeight: FontWeight.bold)),
+              ),
+            );
           },
         );
       },
-    );
-  }
-
-  Widget _buildTransactionItem(my_transaction.Transaction transaction, {required int index, required bool isLast, required double historicalBalance}) {
-    final isProfit = transaction.amount >= 0;
-    final amountText = '${isProfit ? '+' : ''}${transaction.amount.toStringAsFixed(2)} ETB';
-
-    return IntrinsicHeight(
-      child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Column(mainAxisAlignment: MainAxisAlignment.start, children: [
-          if (index != 0) Expanded(child: Container(width: 2, color: Colors.white24)) else const Expanded(child: SizedBox()),
-          const Icon(Icons.circle, color: Colors.white24, size: 12),
-          if (!isLast) Expanded(child: Container(width: 2, color: Colors.white24)) else const Expanded(child: SizedBox()),
-        ]),
-        const SizedBox(width: 16),
-        Expanded(child: Padding(
-          padding: const EdgeInsets.only(bottom: 24.0),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Icon(Icons.monetization_on, color: Colors.amber, size: 24),
-            const SizedBox(width: 8),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(
-                transaction.type == my_transaction.TransactionType.game ? 'Game ${transaction.gameId ?? ''} ${isProfit ? 'profit' : 'fee'}' : transaction.reason ?? 'Manual Transaction',
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-              ),
-              Text('${transaction.amount.toStringAsFixed(2)} Birr', style: const TextStyle(color: Colors.white70)),
-              Text('${transaction.date.day}/${transaction.date.month}/${transaction.date.year}, ${transaction.date.hour}:${transaction.date.minute}', style: const TextStyle(color: Colors.white54, fontSize: 12)),
-            ])),
-            const SizedBox(width: 8),
-            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              Text(amountText, style: TextStyle(color: isProfit ? Colors.greenAccent : Colors.redAccent, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              Text('Balance: ${historicalBalance.toStringAsFixed(2)} ETB', style: const TextStyle(color: Colors.white54, fontSize: 12)),
-            ])
-          ]),
-        )),
-      ]),
     );
   }
 }

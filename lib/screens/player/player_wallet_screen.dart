@@ -1,12 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:mygame/simple_payment_fix.dart';
-import 'package:mygame/firebase_rules_check.dart';
-import 'package:mygame/game_status_checker.dart';
-import 'package:mygame/data_type_debugger_fixed.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:intl/intl.dart'; // Import the intl package
-// Payment debug/test widgets removed to avoid missing-import build errors
+import 'package:intl/intl.dart';
 
 enum TransactionFilter { ALL, WINNINGS, FEES }
 
@@ -24,14 +19,10 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return const Stream.empty();
     
-    // Force refresh to avoid cache issues
     return FirebaseFirestore.instance
         .collection('players')
         .doc(user.uid)
-        .snapshots(
-          // Add options to ensure real-time updates
-          includeMetadataChanges: true,
-        );
+        .snapshots(includeMetadataChanges: true);
   }
 
   Stream<QuerySnapshot> _transactionsStream() {
@@ -56,106 +47,6 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
     return query.snapshots();
   }
 
-  Future<void> _fixAccountData() async {
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please login first'), backgroundColor: Colors.red),
-        );
-        return;
-      }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Fixing account data...'), backgroundColor: Colors.orange),
-      );
-
-      // Get current player data
-      final playerDoc = await FirebaseFirestore.instance
-          .collection('players')
-          .doc(user.uid)
-          .get();
-
-      if (!playerDoc.exists) {
-        // Create new player document
-        await FirebaseFirestore.instance
-            .collection('players')
-            .doc(user.uid)
-            .set({
-              'name': user.displayName ?? 'Player',
-              'email': user.email ?? '',
-              'phoneNumber': '',
-              'balance': 500.0, // Default balance
-              'joinDate': FieldValue.serverTimestamp(),
-            });
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✅ Account created with 500 ETB balance'), backgroundColor: Colors.green),
-        );
-      } else {
-        // Fix existing data
-        final data = playerDoc.data()!;
-        Map<String, dynamic> updates = {};
-        
-        // Fix balance if missing or invalid
-        if (!data.containsKey('balance') || data['balance'] == null) {
-          updates['balance'] = 500.0;
-        } else if (data['balance'] is int) {
-          // Convert int balance to double
-          updates['balance'] = (data['balance'] as int).toDouble();
-        } else if (data['balance'] is String) {
-          // Convert string balance to double
-          final parsed = double.tryParse(data['balance'] as String);
-          if (parsed != null) {
-            updates['balance'] = parsed;
-          } else {
-            updates['balance'] = 500.0;
-          }
-        }
-        
-        // Fix name if missing
-        if (!data.containsKey('name') || data['name'] == null) {
-          updates['name'] = user.displayName ?? 'Player';
-        }
-        
-        // Fix email if missing
-        if (!data.containsKey('email') || data['email'] == null) {
-          updates['email'] = user.email ?? '';
-        }
-        
-        // Fix joinDate if missing or wrong type
-        if (!data.containsKey('joinDate') || data['joinDate'] == null) {
-          updates['joinDate'] = FieldValue.serverTimestamp();
-        } else if (data['joinDate'] is String) {
-          // Convert string date to timestamp
-          updates['joinDate'] = FieldValue.serverTimestamp();
-        }
-        
-        if (updates.isNotEmpty) {
-          await FirebaseFirestore.instance
-              .collection('players')
-              .doc(user.uid)
-              .update(updates);
-          
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('✅ Fixed ${updates.length} account issues'), backgroundColor: Colors.green),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('✅ Account data looks good'), backgroundColor: Colors.green),
-          );
-        }
-      }
-      
-      setState(() {}); // Refresh UI
-      
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('❌ Error fixing account: $e'), backgroundColor: Colors.red),
-      );
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -167,50 +58,9 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
             child: _buildBalanceCard(),
           ),
           _buildFilterChips(),
-          const SizedBox(height: 8),
-          // Data Type Debugger Button
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: ElevatedButton.icon(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const DataTypeDebugger()),
-                );
-              },
-              icon: const Icon(Icons.bug_report),
-              label: const Text('Debug Data Types'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          // Game Status Checker Button
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: ElevatedButton.icon(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const GameStatusChecker()),
-                );
-              },
-              icon: const Icon(Icons.search),
-              label: const Text('Check Game Status'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.purple,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          // Payment debug buttons removed
-          const SizedBox(height: 16),
-          const Text('Transaction History', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 24),
+          const Text('Transaction History', 
+            style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
           Expanded(child: _buildTransactionList()),
         ],
@@ -226,8 +76,6 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
           return const Center(child: CircularProgressIndicator());
         }
         
-        // Check if data is from cache - access metadata on DocumentSnapshot, not AsyncSnapshot
-        final isFromCache = snapshot.data!.metadata.isFromCache;
         final balance = (snapshot.data!.data() as Map<String, dynamic>?)?['balance'] ?? 0.0;
 
         return Card(
@@ -243,37 +91,17 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
                     const SizedBox(width: 16),
                     Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       const Text('Current Balance', style: TextStyle(color: Colors.white70, fontSize: 16)),
-                      Text('${balance.toStringAsFixed(2)} ETB', style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
+                      Text('${balance.toStringAsFixed(2)} ETB', 
+                        style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
                     ]),
                   ],
                 ),
-                if (isFromCache)
-                  Container(
-                    margin: const EdgeInsets.only(top: 8),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.orange),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.warning, color: Colors.orange, size: 16),
-                        const SizedBox(width: 4),
-                        const Text('Showing cached data', style: TextStyle(color: Colors.orange, fontSize: 12)),
-                      ],
-                    ),
-                  ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 20),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: () async {
-                      // Force refresh by clearing cache and re-fetching
-                      await FirebaseFirestore.instance.clearPersistence();
-                      setState(() {}); // Trigger rebuild
-                      
+                    onPressed: () {
+                      setState(() {}); // Trigger rebuild/refresh
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text('Refreshing balance...'),
@@ -285,24 +113,9 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
                     icon: const Icon(Icons.refresh, color: Colors.white),
                     label: const Text('Refresh Balance'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue,
+                      backgroundColor: Colors.blueAccent,
                       foregroundColor: Colors.white,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () async {
-                      // Fix account data
-                      await _fixAccountData();
-                    },
-                    icon: const Icon(Icons.healing, color: Colors.white),
-                    label: const Text('Fix Account Data'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
                   ),
                 ),
@@ -354,7 +167,8 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
           return const Center(child: CircularProgressIndicator());
         }
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return const Center(child: Text('No transactions for this filter.', style: TextStyle(color: Colors.white70)));
+          return const Center(child: Text('No transactions for this filter.', 
+            style: TextStyle(color: Colors.white70)));
         }
 
         final transactions = snapshot.data!.docs;
@@ -368,17 +182,19 @@ class _PlayerWalletScreenState extends State<PlayerWalletScreen> {
             final amount = (data['amount'] as num).toDouble();
             final reason = data['reason'] as String? ?? 'N/A';
             final date = (data['date'] as Timestamp?)?.toDate();
-            // Use the intl package to format the date and time
             final formattedDate = date != null ? DateFormat.yMd().add_jm().format(date) : 'N/A';
 
             return Card(
               color: const Color(0xFF1C1C3A),
               margin: const EdgeInsets.only(bottom: 8.0),
               child: ListTile(
-                leading: Icon(amount > 0 ? Icons.arrow_upward : Icons.arrow_downward, color: amount > 0 ? Colors.greenAccent : Colors.redAccent),
+                leading: Icon(amount > 0 ? Icons.arrow_upward : Icons.arrow_downward, 
+                  color: amount > 0 ? Colors.greenAccent : Colors.redAccent),
                 title: Text(reason, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                 subtitle: Text(formattedDate, style: const TextStyle(color: Colors.white70)),
-                trailing: Text('${amount.toStringAsFixed(2)} ETB', style: TextStyle(color: amount > 0 ? Colors.greenAccent : Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 16)),
+                trailing: Text('${amount.toStringAsFixed(2)} ETB', 
+                  style: TextStyle(color: amount > 0 ? Colors.greenAccent : Colors.redAccent, 
+                  fontWeight: FontWeight.bold, fontSize: 16)),
               ),
             );
           },

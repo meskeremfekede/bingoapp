@@ -3,8 +3,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 class PlayerNameWidget extends StatelessWidget {
   final String playerId;
+  final TextStyle? textStyle; // Added optional textStyle
 
-  const PlayerNameWidget({super.key, required this.playerId});
+  const PlayerNameWidget({super.key, required this.playerId, this.textStyle});
 
   @override
   Widget build(BuildContext context) {
@@ -12,13 +13,15 @@ class PlayerNameWidget extends StatelessWidget {
       future: FirebaseFirestore.instance.collection('players').doc(playerId).get(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Text('Loading...');
+          return Text('Loading...', style: textStyle);
         }
         if (!snapshot.hasData || !snapshot.data!.exists) {
-          return Text(playerId); // Fallback to ID
+          return Text(playerId, style: textStyle); // Fallback to ID
         }
         final playerData = snapshot.data!.data() as Map<String, dynamic>;
-        return Text(playerData['name'] ?? playerId, style: const TextStyle(fontWeight: FontWeight.bold));
+        // Use provided style or default bold
+        final finalStyle = textStyle ?? const TextStyle(fontWeight: FontWeight.bold);
+        return Text(playerData['name'] ?? playerId, style: finalStyle);
       },
     );
   }

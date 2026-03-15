@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:mygame/services/firebase_service.dart';
 import 'package:mygame/widgets/player_name_widget.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 class PlayerGameBoardScreen extends StatefulWidget {
   final String gameId;
@@ -21,90 +23,60 @@ class PlayerGameBoardScreen extends StatefulWidget {
 
 class _PlayerGameBoardScreenState extends State<PlayerGameBoardScreen> {
   final FirebaseService _firebaseService = FirebaseService();
-  bool _isClaiming = false;
-  bool _isWinnerDialogShown = false;
+  final Set<int> _markedNumbers = {0}; 
+  final Map<int, Timer> _activeTimers = {}; 
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  int _lastCalledCount = 0;
+
+  @override
+  void dispose() {
+    for (var timer in _activeTimers.values) { timer.cancel(); }
+    _audioPlayer.dispose();
+    super.dispose();
+  }
 
   Stream<DocumentSnapshot> _getGameStream() {
     return FirebaseFirestore.instance.collection('games').doc(widget.gameId).snapshots();
   }
 
-  Stream<DocumentSnapshot> _getPlayerDataStream() {
-    return FirebaseFirestore.instance
-        .collection('games')
-        .doc(widget.gameId)
-        .collection('playerData')
-        .doc(widget.playerId)
-        .snapshots(
-          // Add real-time sync options
-          includeMetadataChanges: true,
-        );
-  }
-
-  Future<void> _claimWin() async {
+  void _onSquareTapped(int number) {
+    if (number == 0 || _markedNumbers.contains(number)) return;
+    
     setState(() {
-      _isClaiming = true;
-    });
-
-    final bool didWin = await _firebaseService.claimWin(gameId: widget.gameId, playerId: widget.playerId);
-
-    if (mounted) {
-      if (!didWin) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('You do not have a winning pattern yet.'),
-            backgroundColor: Colors.red,
-          ),
-        );
+      _markedNumbers.add(number);
+      if (_activeTimers.containsKey(number)) {
+        _activeTimers[number]?.cancel();
+        _activeTimers.remove(number);
       }
-      setState(() {
-        _isClaiming = false;
-      });
-    }
+    });
   }
 
-  void _showWinnerDialog(BuildContext context, List<dynamic> winners) {
-    if (_isWinnerDialogShown) return;
-    setState(() {
-      _isWinnerDialogShown = true;
-    });
+  void _playNumberCalledSound() async {
+    try { await _audioPlayer.play(AssetSource('sounds/number_called.mp3')); } catch (e) {}
+  }
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) {
-          final winnerIds = winners.map((w) => w['playerId'] as String? ?? '').where((id) => id.isNotEmpty).toList();
-          final isWinner = winnerIds.contains(widget.playerId);
+  void _playWinnerSound() async {
+    try { await _audioPlayer.play(AssetSource('sounds/winner_announced.mp3')); } catch (e) {}
+  }
 
-          return AlertDialog(
-            title: Text(isWinner ? 'Congratulations, You Won!' : 'Game Over!'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(isWinner ? 'You are one of the winners!' : 'A winner has been found.'),
-                const SizedBox(height: 10),
-                const Text('Winners:', style: TextStyle(fontWeight: FontWeight.bold)),
-                if (winnerIds.isEmpty)
-                  const Text('No winners information available.')
-                else
-                  ...winnerIds.map((id) => PlayerNameWidget(playerId: id)),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  Navigator.of(context).popUntil((route) => route.isFirst);
-                },
-                child: const Text('Go to Main Screen'),
-              ),
-            ],
-          );
-        },
-      );
-    });
+  void _handleIncomingNumbers(List<int> calledNumbers) {
+    if (calledNumbers.length > _lastCalledCount) {
+      _lastCalledCount = calledNumbers.length;
+      _playNumberCalledSound();
+    }
+
+    for (final n in calledNumbers) {
+      if (!_markedNumbers.contains(n) && !_activeTimers.containsKey(n)) {
+        _activeTimers[n] = Timer(const Duration(seconds: 3), () {
+          if (mounted) {
+            setState(() {
+              _markedNumbers.add(n);
+              _activeTimers.remove(n);
+            });
+          }
+        });
+      }
+    }
   }
 
   @override
@@ -112,286 +84,161 @@ class _PlayerGameBoardScreenState extends State<PlayerGameBoardScreen> {
     return StreamBuilder<DocumentSnapshot>(
       stream: _getGameStream(),
       builder: (context, gameSnapshot) {
-        if (gameSnapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(backgroundColor: Color(0xFF0A0A1A), body: Center(child: CircularProgressIndicator()));
-        }
         if (!gameSnapshot.hasData || gameSnapshot.data?.data() == null) {
-          return const Scaffold(backgroundColor: Color(0xFF0A0A1A), body: Center(child: Text('Game not found.', style: TextStyle(color: Colors.white))));
+          return const Scaffold(backgroundColor: Color(0xFF0A0A1A), body: Center(child: CircularProgressIndicator()));
         }
 
         final gameData = gameSnapshot.data!.data()! as Map<String, dynamic>;
-        final calledNumbers = List<int>.from(gameData['calledNumbers'] ?? []);
-        final winningPattern = gameData['winningPattern'] as String? ?? 'N/A'; // Fixed spelling
-        final status = gameData['status'] as String? ?? 'pending';
-        final competitors = List<String>.from(gameData['players'] ?? []);
+        final calledNumbers = (gameData['calledNumbers'] as List<dynamic>? ?? [])
+            .map((e) => (e as num).toInt())
+            .toList();
+            
+        final winningPattern = gameData['winningPattern'] as String? ?? 'Any Line';
+        final status = gameData['status'] as String? ?? 'ongoing';
+        final winners = List<dynamic>.from(gameData['winners'] ?? []);
 
-        if (status == 'completed') {
-          final winners = gameData['winners'] as List<dynamic>? ?? [];
-          _showWinnerDialog(context, winners);
+        _handleIncomingNumbers(calledNumbers);
+
+        if (status == 'completed' && winners.isNotEmpty) {
+          final winner = winners.first as Map<String, dynamic>;
+          final winnerNickname = winner['nickname'] ?? '??';
+          final winnerId = winner['playerId'] ?? '';
+          final isYou = winnerId == widget.playerId;
+
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _playWinnerSound();
+            _showWinnerVibe(context, winnerNickname, winnerId, isYou);
+          });
         }
 
         return Scaffold(
           backgroundColor: const Color(0xFF0A0A1A),
           appBar: AppBar(
-            title: Text('Game: ${widget.gameId}'),
+            title: const Text('BINGO MATCH', style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.2)),
             backgroundColor: const Color(0xFF0A0A1A),
             elevation: 0,
             automaticallyImplyLeading: false,
-            actions: [_buildSelectedFlagsWidget()], // Display flags in app bar
+            actions: [_buildSelectedFlagsWidget(gameData)],
           ),
           body: Column(
             children: [
               _buildGameInfoBar(calledNumbers, winningPattern),
-              const Divider(color: Colors.white24),
+              const Divider(color: Colors.white10),
               Expanded(
                 child: ListView(
                   children: [
-                    _buildCardsWidget(calledNumbers),
-                    _buildCompetitorsList(competitors),
+                    _buildCardsWidget(gameData, calledNumbers),
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 24, 16, 8),
+                      child: Text('COMPETITORS', style: TextStyle(color: Colors.white38, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.1)),
+                    ),
+                    _buildCompetitorsGrid(List<String>.from(gameData['players'] ?? [])),
                   ],
                 ),
               ),
             ],
           ),
-          floatingActionButton: FloatingActionButton.extended(
-            onPressed: _isClaiming || status == 'completed' ? null : _claimWin,
-            label: const Text('Bingo!'),
-            icon: const Icon(Icons.celebration),
-            backgroundColor: _isClaiming || status == 'completed' ? Colors.grey : Colors.orange,
-          ),
-        );
-      },
-    );
-  }
-  
-  // New Widget to display selected flags
-  Widget _buildSelectedFlagsWidget() {
-    return StreamBuilder<DocumentSnapshot>(
-      stream: _getPlayerDataStream(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) return const SizedBox.shrink();
-        final playerData = snapshot.data!.data() as Map<String, dynamic>? ?? {};
-        final flags = List<int>.from(playerData['selectedFlags'] ?? []);
-        if (flags.isEmpty) return const SizedBox.shrink();
-
-        return Padding(
-          padding: const EdgeInsets.only(right: 16.0),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: flags.map((flag) {
-              return Container(
-                margin: const EdgeInsets.symmetric(horizontal: 2),
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.blueAccent,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 1.5),
-                ),
-                child: Text(flag.toString(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              );
-            }).toList(),
-          ),
         );
       },
     );
   }
 
-  Widget _buildCardsWidget(List<int> calledNumbers) {
-    if (widget.initialCards != null && widget.initialCards!.isNotEmpty) {
-      return _buildCardList(widget.initialCards!, calledNumbers);
+  void _showWinnerVibe(BuildContext context, String nickname, String id, bool isYou) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1C1C3A),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: const BorderSide(color: Colors.amber, width: 2)),
+        title: Text(isYou ? '🏆 YOU WON! 🏆' : '🔥 BINGO! 🔥', textAlign: TextAlign.center, style: const TextStyle(color: Colors.amber, fontSize: 24, fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.stars, color: Colors.amber, size: 80),
+            const SizedBox(height: 24),
+            const Text('Match Winner:', style: TextStyle(color: Colors.white70, fontSize: 14)),
+            const SizedBox(height: 4),
+            PlayerNameWidget(playerId: id), 
+            const SizedBox(height: 16),
+            const Text('Game Identity:', style: TextStyle(color: Colors.white38, fontSize: 12)),
+            Text('FLAG #$nickname', style: const TextStyle(color: Colors.greenAccent, fontSize: 32, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 16),
+            Text(isYou ? 'Prizes have been added to your balance.' : 'Better luck next time!', 
+              textAlign: TextAlign.center, style: const TextStyle(color: Colors.white24, fontSize: 11)),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
+            child: const Text('BACK TO MENU', style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSelectedFlagsWidget(Map<String, dynamic> gameData) {
+    final flags = (gameData['${widget.playerId}_selectedFlags'] as List<dynamic>? ?? [])
+        .map((e) => (e as num).toInt())
+        .toList();
+    return Padding(
+      padding: const EdgeInsets.only(right: 16.0),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: flags.map((flag) => Container(
+          margin: const EdgeInsets.symmetric(horizontal: 2),
+          padding: const EdgeInsets.all(6),
+          decoration: const BoxDecoration(color: Colors.blueAccent, shape: BoxShape.circle),
+          child: Text('$flag', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+        )).toList(),
+      ),
+    );
+  }
+
+  Widget _buildCardsWidget(Map<String, dynamic> gameData, List<int> calledNumbers) {
+    final List<List<int>> cardsData = [];
+    final playerPrefix = '${widget.playerId}_card';
+    final cardKeys = gameData.keys.where((k) => k.startsWith(playerPrefix) && !k.contains('Count')).toList();
+    cardKeys.sort();
+
+    for (final key in cardKeys) {
+      final val = gameData[key] ?? '';
+      if (val is String && val.isNotEmpty) {
+        final List<int> card = val.split(',').map((s) => int.tryParse(s.trim()) ?? 0).toList();
+        if (card.length == 25) cardsData.add(card);
+      }
     }
-    
-    return StreamBuilder<DocumentSnapshot>(
-      stream: _getPlayerDataStream(),
-      builder: (context, playerSnapshot) {
-        if (playerSnapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (playerSnapshot.hasError) {
-          return Center(child: Text("Error loading cards: ${playerSnapshot.error}", style: const TextStyle(color: Colors.red)));
-        }
-        if (!playerSnapshot.hasData || playerSnapshot.data?.data() == null) {
-          return Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Text("Rejoining... Waiting for cards...", style: TextStyle(color: Colors.white70)),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: () async {
-                  // Force refresh by clearing cache and reconnecting
-                  try {
-                    await FirebaseFirestore.instance.clearPersistence();
-                    setState(() {});
-                  } catch (e) {
-                    setState(() {});
-                  }
-                },
-                icon: const Icon(Icons.refresh),
-                label: const Text('Force Refresh'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blue,
-                  foregroundColor: Colors.white,
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                "If you're stuck, try refreshing or go back and rejoin the game.",
-                style: TextStyle(color: Colors.white54, fontSize: 12),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          );
-        }
 
-        // Also listen to game data for cards
-        return StreamBuilder<DocumentSnapshot>(
-          stream: _getGameStream(),
-          builder: (context, gameSnapshot) {
-            if (!gameSnapshot.hasData || gameSnapshot.data?.data() == null) {
-              return const Center(child: CircularProgressIndicator());
-            }
-
-            final playerData = playerSnapshot.data!.data() as Map<String, dynamic>? ?? {};
-            
-            // Read cards from game document instead of playerData subcollection
-            final gameData = gameSnapshot.data!.data() as Map<String, dynamic>? ?? {};
-            final cardsMap = gameData['${widget.playerId}_cards'] as Map<String, dynamic>? ?? {};
-            final List<List<int>> cardsData = [];
-            
-            // Convert string cards back to List<int>
-            final cardKeys = cardsMap.keys.where((key) => key.startsWith('${widget.playerId}_card')).toList();
-            cardKeys.sort(); // Sort to ensure correct order
-            
-            for (final cardKey in cardKeys) {
-              final cardString = cardsMap[cardKey] as String? ?? '';
-              debugPrint('Processing card $cardKey: $cardString');
-              
-              if (cardString.isNotEmpty) {
-                final numbers = cardString.split(',').map((s) => int.tryParse(s.trim()) ?? 0).toList();
-                if (numbers.length == 25) { // Bingo card should have 25 numbers
-                  cardsData.add(numbers);
-                  debugPrint('✅ Added card with ${numbers.length} numbers');
-                } else {
-                  debugPrint('❌ Invalid card length: ${numbers.length}');
-                }
-              }
-            }
-            
-            // Read flags from game document
-            final List<dynamic> selectedFlags = gameData['${widget.playerId}_selectedFlags'] as List<dynamic>? ?? [];
-            final String paymentStatus = 'paid'; // If we got here, payment was successful
-
-            debugPrint('=== GAME BOARD DEBUG ===');
-            debugPrint('Player ID: ${widget.playerId}');
-            debugPrint('Game ID: ${widget.gameId}');
-            debugPrint('Cards map keys: ${cardsMap.keys.toList()}');
-            debugPrint('Cards data count: ${cardsData.length}');
-            debugPrint('Selected flags: ${selectedFlags.toList()}');
-            debugPrint('Payment status: $paymentStatus');
-            
-            // Debug: Print first few cards
-            for (int i = 0; i < cardsData.length && i < 2; i++) {
-              debugPrint('Card $i: ${cardsData[i]}');
-            }
-
-            // Check if player has selected flags
-            if (selectedFlags.isEmpty) {
-              debugPrint('❌ No flags selected - showing flag selection prompt');
-              return Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.flag, color: Colors.amber, size: 48),
-                  const SizedBox(height: 16),
-                  const Text(
-                    "You need to select your flag numbers first!",
-                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.amber,
-                      foregroundColor: Colors.black,
-                    ),
-                    child: const Text('Go Back to Select Flags'),
-                  ),
-                ],
-              );
-            }
-
-            if (cardsData.isEmpty) {
-              debugPrint('❌ No cards found - showing waiting message');
-              return Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.hourglass_empty, color: Colors.white70, size: 48),
-                  const SizedBox(height: 16),
-                  const Text(
-                    "Waiting for cards to be assigned...",
-                    style: TextStyle(color: Colors.white70, fontSize: 16),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    "Cards should appear after payment is completed.",
-                    style: TextStyle(color: Colors.white54, fontSize: 12),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton.icon(
-                    onPressed: () => setState(() {}),
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Refresh'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue,
-                      foregroundColor: Colors.white,
-                    ),
-                  ),
-                ],
-              );
-            }
-
-            debugPrint('✅ Found ${cardsData.length} cards - building game board');
-
-            final List<List<int>> safeCards = cardsData.map((card) {
-              if (card is List) {
-                return card.map((num) => (num as int? ?? 0)).toList();
-              } else {
-                return <int>[];
-              }
-            }).where((card) => card.isNotEmpty).toList();
-            
-            return _buildCardList(safeCards, calledNumbers);
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildCardList(List<List<int>> cards, List<int> calledNumbers) {
-    return Column(
-      children: cards.asMap().entries.map((entry) {
-        return _buildBingoCard(entry.value, calledNumbers, entry.key + 1);
-      }).toList(),
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: cardsData.asMap().entries.map((entry) => Container(
+          width: 220,
+          margin: const EdgeInsets.all(12),
+          child: _buildBingoCard(entry.value, calledNumbers, entry.key + 1),
+        )).toList(),
+      ),
     );
   }
 
   Widget _buildGameInfoBar(List<int> calledNumbers, String winningPattern) {
     return Padding(
-      padding: const EdgeInsets.all(8.0),
+      padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('Winning Pattern:', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)), // Fixed display
-              Chip(label: Text(winningPattern, style: const TextStyle(fontWeight: FontWeight.bold)), backgroundColor: Colors.purple.shade300),
+              const Text('PATTERN:', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(color: Colors.amber, borderRadius: BorderRadius.circular(20)),
+                child: Text(winningPattern, style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 12)),
+              ),
             ],
           ),
-          const SizedBox(height: 8),
-          const Text('Called Numbers', style: TextStyle(color: Colors.white70, fontSize: 14)),
-          const SizedBox(height: 4),
+          const SizedBox(height: 12),
           SizedBox(
             height: 40,
             child: ListView.builder(
@@ -400,10 +247,10 @@ class _PlayerGameBoardScreenState extends State<PlayerGameBoardScreen> {
               itemBuilder: (context, index) {
                 final number = calledNumbers[calledNumbers.length - 1 - index];
                 return Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 4),
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(color: Colors.grey.shade800, shape: BoxShape.circle),
-                  child: Center(child: Text(number.toString(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
+                  margin: const EdgeInsets.only(right: 8),
+                  width: 40,
+                  decoration: const BoxDecoration(color: Colors.purpleAccent, shape: BoxShape.circle),
+                  child: Center(child: Text('$number', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
                 );
               },
             ),
@@ -413,59 +260,69 @@ class _PlayerGameBoardScreenState extends State<PlayerGameBoardScreen> {
     );
   }
 
-  Widget _buildBingoCard(List<int> cardNumbers, List<int> calledNumbers, int cardTitleIndex) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Card $cardTitleIndex', style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          GridView.builder(
+  Widget _buildBingoCard(List<int> cardNumbers, List<int> calledNumbers, int index) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('BOARD #$index', style: const TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(12)),
+          child: GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 5, crossAxisSpacing: 4, mainAxisSpacing: 4),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 5, childAspectRatio: 1.0, crossAxisSpacing: 4, mainAxisSpacing: 4),
             itemCount: 25,
-            itemBuilder: (context, index) {
-              final number = (index < cardNumbers.length) ? cardNumbers[index] : 0;
-              final isCalled = number == 0 || calledNumbers.contains(number);
+            itemBuilder: (context, i) {
+              final n = cardNumbers[i];
+              final isCalled = calledNumbers.contains(n) || n == 0;
+              final isMarked = _markedNumbers.contains(n);
+              final isGlow = isCalled && !isMarked;
 
-              return Container(
-                decoration: BoxDecoration(
-                  color: isCalled ? Colors.amber : const Color(0xFF1C1C3A),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Center(
-                  child: Text(
-                    number == 0 ? 'FREE' : number.toString(),
-                    style: TextStyle(
-                      color: isCalled ? Colors.black : Colors.white,
-                      fontWeight: isCalled ? FontWeight.bold : FontWeight.normal,
-                      fontSize: 16,
+              return GestureDetector(
+                onTap: isCalled ? () => _onSquareTapped(n) : null,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  decoration: BoxDecoration(
+                    color: isMarked ? Colors.greenAccent : (isGlow ? Colors.white.withOpacity(0.2) : const Color(0xFF1C1C3A)),
+                    borderRadius: BorderRadius.circular(6),
+                    border: isGlow ? Border.all(color: Colors.white, width: 2) : null,
+                    boxShadow: isGlow ? [
+                      BoxShadow(color: Colors.purpleAccent.withOpacity(0.8), blurRadius: 12, spreadRadius: 2),
+                      const BoxShadow(color: Colors.white, blurRadius: 4),
+                    ] : null,
+                  ),
+                  child: Center(
+                    child: Text(
+                      n == 0 ? 'FREE' : '$n',
+                      style: TextStyle(
+                        color: isMarked ? Colors.black : Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 10,
+                      ),
                     ),
                   ),
                 ),
               );
             },
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
-  Widget _buildCompetitorsList(List<String> competitors) {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: ExpansionTile(
-        title: const Text('Competitors', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        initiallyExpanded: false,
-        children: competitors.map((playerId) => Card(
-          color: const Color(0xFF1C1C3A),
-          child: ListTile(
-            leading: const Icon(Icons.person, color: Colors.white70),
-            title: PlayerNameWidget(playerId: playerId),
-          ),
-        )).toList(),
+  Widget _buildCompetitorsGrid(List<String> competitors) {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, childAspectRatio: 3.5, crossAxisSpacing: 12, mainAxisSpacing: 12),
+      itemCount: competitors.length,
+      itemBuilder: (context, index) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(color: const Color(0xFF1C1C3A), borderRadius: BorderRadius.circular(8)),
+        child: Center(child: PlayerNameWidget(playerId: competitors[index], textStyle: const TextStyle(color: Colors.white70, fontSize: 12))),
       ),
     );
   }

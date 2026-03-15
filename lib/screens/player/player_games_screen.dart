@@ -49,12 +49,20 @@ class _PlayerGamesScreenState extends State<PlayerGamesScreen> {
   Stream<List<ActiveGame>> _getOngoingGames() {
     final user = _auth.currentUser;
     if (user == null) return const Stream.empty();
+    
+    // Get all ongoing games, then filter for ones where player is joined
     return FirebaseFirestore.instance
         .collection('games')
         .where('status', isEqualTo: 'ongoing')
-        .where('players', arrayContains: user.uid)
         .snapshots()
-        .map((snapshot) => snapshot.docs.map((doc) => ActiveGame.fromFirestore(doc)).toList());
+        .map((snapshot) => snapshot.docs
+            .where((doc) {
+              final gameData = doc.data() as Map<String, dynamic>? ?? {};
+              final players = List<String>.from(gameData['players'] ?? []);
+              return players.contains(user.uid);
+            })
+            .map((doc) => ActiveGame.fromFirestore(doc))
+            .toList());
   }
 
   void _showJoinGameDialog(ActiveGame game) {
@@ -108,12 +116,33 @@ class _PlayerGamesScreenState extends State<PlayerGamesScreen> {
     final user = _auth.currentUser;
     if (user == null) return;
     
-    // Go directly to card selection for rejoining too
     try {
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => CardSelectionScreen(gameId: game.id)),
-      );
+      // Check if player already has cards in this game
+      final gameDoc = await FirebaseFirestore.instance.collection('games').doc(game.id).get();
+      final gameData = gameDoc.data() as Map<String, dynamic>? ?? {};
+      
+      // Check if player has cards or flags in the game
+      final hasCards = gameData.containsKey('${user.uid}_cards');
+      final hasFlags = gameData.containsKey('${user.uid}_selectedFlags');
+      
+      if (hasCards && hasFlags) {
+        // Player already has cards - go directly to game board
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => PlayerGameBoardScreen(
+              gameId: game.id,
+              playerId: user.uid,
+            ),
+          ),
+        );
+      } else {
+        // Player needs to select cards/flags first
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => CardSelectionScreen(gameId: game.id)),
+        );
+      }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Failed to rejoin game: ${e.toString()}")),
