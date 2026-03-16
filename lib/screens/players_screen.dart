@@ -27,16 +27,14 @@ class _PlayersScreenState extends State<PlayersScreen> {
         .collection('players')
         .snapshots()
         .map((snapshot) {
+          debugPrint('📋 PLAYERS STREAM: Received ${snapshot.docs.length} documents from Firestore');
           var players = snapshot.docs.map((doc) => Player.fromFirestore(doc)).toList();
-          if (_searchQuery.isNotEmpty) {
-            final queryLower = _searchQuery.toLowerCase();
-            players = players.where((player) {
-              return player.name.toLowerCase().contains(queryLower) || 
-                     player.phoneNumber.contains(queryLower);
-            }).toList();
-          }
-          players.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+          
+          // Don't filter here - let the widget handle filtering
+          players.sort((a, b) => (a.name.isEmpty ? '' : a.name.toLowerCase()).compareTo(b.name.isEmpty ? '' : b.name.toLowerCase()));
           final totalBalance = players.fold(0.0, (sum, player) => sum + player.balance);
+          debugPrint('💰 PLAYERS STREAM: Total balance: $totalBalance');
+          
           return PlayerData(players: players, totalBalance: totalBalance);
         });
   }
@@ -213,14 +211,51 @@ class _PlayersScreenState extends State<PlayersScreen> {
                 stream: _getPlayersStream(),
                 builder: (context, snapshot) {
                   if (!snapshot.hasData) return const Center(child: CircularProgressIndicator(color: Colors.purpleAccent));
-                  final players = snapshot.data!.players;
+                  final allPlayers = snapshot.data!.players;
                   
-                  if (players.isEmpty) return const Center(child: Text('No players found.', style: TextStyle(color: Colors.white24)));
+                  // Apply search filter here
+                  List<Player> filteredPlayers = allPlayers;
+                  if (_searchQuery.isNotEmpty) {
+                    final queryLower = _searchQuery.toLowerCase();
+                    filteredPlayers = allPlayers.where((player) {
+                      return (player.name.isNotEmpty && player.name.toLowerCase().contains(queryLower)) || 
+                             (player.phoneNumber.isNotEmpty && player.phoneNumber.contains(queryLower));
+                    }).toList();
+                  }
+                  
+                  debugPrint('🔍 PLAYERS SCREEN: Total players: ${allPlayers.length}, Filtered: ${filteredPlayers.length}');
+                  
+                  if (filteredPlayers.isEmpty) {
+                    return Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            _searchQuery.isNotEmpty ? Icons.search_off : Icons.people_outline, 
+                            color: Colors.white24, 
+                            size: 64
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            _searchQuery.isNotEmpty ? 'No players found for "$_searchQuery"' : 'No players found.', 
+                            style: const TextStyle(color: Colors.white24, fontSize: 16)
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _searchQuery.isNotEmpty 
+                              ? 'Try a different search term'
+                              : 'Players will appear here when they register.', 
+                            style: const TextStyle(color: Colors.white10, fontSize: 12)
+                          ),
+                        ],
+                      ),
+                    );
+                  }
 
                   return ListView.builder(
-                    itemCount: players.length,
+                    itemCount: filteredPlayers.length,
                     itemBuilder: (context, index) {
-                      final p = players[index];
+                      final p = filteredPlayers[index];
                       return Card(
                         color: const Color(0xFF1C1C3A),
                         margin: const EdgeInsets.only(bottom: 12),
@@ -229,7 +264,7 @@ class _PlayersScreenState extends State<PlayersScreen> {
                           onTap: () => _showPlayerHistory(p),
                           leading: CircleAvatar(
                             backgroundColor: Colors.purpleAccent.withOpacity(0.2), 
-                            child: Text(p.name.substring(0, 1).toUpperCase(), style: const TextStyle(color: Colors.purpleAccent, fontWeight: FontWeight.bold))
+                            child: Text(p.name.isNotEmpty ? p.name.substring(0, 1).toUpperCase() : '?', style: const TextStyle(color: Colors.purpleAccent, fontWeight: FontWeight.bold))
                           ),
                           title: Text(p.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                           subtitle: Text('${p.balance.toStringAsFixed(2)} ETB', style: const TextStyle(color: Colors.greenAccent, fontSize: 13, fontWeight: FontWeight.w500)),

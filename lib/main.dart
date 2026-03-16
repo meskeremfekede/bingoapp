@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mygame/screens/game_screen.dart';
 import 'package:mygame/screens/login_screen.dart';
 import 'package:mygame/screens/players_screen.dart';
@@ -34,18 +35,96 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class AuthWrapper extends StatelessWidget {
+class AuthWrapper extends StatefulWidget {
   const AuthWrapper({super.key});
 
-  Future<bool> _isAdmin(User user) async {
+  @override
+  State<AuthWrapper> createState() => _AuthWrapperState();
+}
+
+class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
+  bool _isAdmin = false;
+  bool _isLoading = true;
+  bool _hasCheckedAdmin = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _loadAdminStatus();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    
+    if (state == AppLifecycleState.resumed && _hasCheckedAdmin) {
+      // App resumed - refresh admin status from cache first
+      _loadAdminStatus();
+    }
+  }
+
+  Future<void> _loadAdminStatus() async {
     try {
-      final doc = await FirebaseFirestore.instance.collection('players').doc(user.uid).get();
-      if (doc.exists && doc.data() != null) {
-        return (doc.data()!['role'] as String? ?? 'player') == 'admin';
-      }
-      return false;
+      final prefs = await SharedPreferences.getInstance();
+      final cachedAdminStatus = prefs.getBool('isAdmin') ?? false;
+      
+      setState(() {
+        _isAdmin = cachedAdminStatus;
+        _isLoading = false;
+      });
+
+      // Verify with Firebase in background
+      _verifyAdminStatusWithFirebase();
     } catch (e) {
-      return false;
+      debugPrint('🔍 AuthWrapper: Error loading admin status: $e');
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _verifyAdminStatusWithFirebase() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final doc = await FirebaseFirestore.instance.collection('players').doc(user.uid).get();
+        if (doc.exists && doc.data() != null) {
+          final data = doc.data() as Map<String, dynamic>;
+          final isAdminUser = (data['isAdmin'] as bool? ?? false) == true || 
+                             (data['role'] as String? ?? 'player') == 'admin';
+          
+          // Cache the result
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setBool('isAdmin', isAdminUser);
+          
+          if (mounted && isAdminUser != _isAdmin) {
+            setState(() => _isAdmin = isAdminUser);
+          }
+          
+          _hasCheckedAdmin = true;
+          debugPrint('🔍 AuthWrapper: Admin status verified: $isAdminUser');
+        }
+      }
+    } catch (e) {
+      debugPrint('🔍 AuthWrapper: Firebase admin check failed: $e');
+    }
+  }
+
+  Future<void> _clearAdminCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('isAdmin');
+      setState(() {
+        _isAdmin = false;
+        _hasCheckedAdmin = false;
+      });
+    } catch (e) {
+      debugPrint('🔍 AuthWrapper: Error clearing admin cache: $e');
     }
   }
 
@@ -59,21 +138,20 @@ class AuthWrapper extends StatelessWidget {
         }
 
         if (authSnapshot.hasData && authSnapshot.data != null) {
-          return FutureBuilder<bool>(
-            future: _isAdmin(authSnapshot.data!),
-            builder: (context, isAdminSnapshot) {
-              if (isAdminSnapshot.connectionState == ConnectionState.waiting) {
-                return const Scaffold(body: Center(child: CircularProgressIndicator()));
-              }
-
-              if (isAdminSnapshot.hasData && isAdminSnapshot.data == true) {
-                return const AppShell(); // Admin Dashboard
-              } else {
-                return const PlayerAppShell(); // Player Dashboard
-              }
-            },
-          );
+          // User is logged in
+          if (_isLoading) {
+            return const Scaffold(body: Center(child: CircularProgressIndicator()));
+          }
+          
+          // Use cached admin status first, then verify in background
+          if (_isAdmin) {
+            return const AppShell(); // Admin Dashboard
+          } else {
+            return const PlayerAppShell(); // Player Dashboard
+          }
         } else {
+          // User logged out - clear admin cache
+          _clearAdminCache();
           return const LoginScreen();
         }
       },
